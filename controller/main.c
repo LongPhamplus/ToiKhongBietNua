@@ -15,6 +15,7 @@
 #include <string.h>
 #include <unistd.h>
 
+#include "coop.h"
 #include "protocol.h"
 #include "ui.h"
 #include "util.h"
@@ -91,6 +92,7 @@ int main(int argc, char *argv[])
     }
     if (load_or_create_app_id() != 0)
         return 1;
+    coop_load(g_data_dir);
 
     static const char *items[] = {
         "Quan ly chuong nuoi",
@@ -106,13 +108,14 @@ int main(int argc, char *argv[])
         if (c <= 0)
             break;                      /* 0 = Thoát, -1 = hết dữ liệu vào */
         switch (c) {
-        case 1: not_yet("Quan ly chuong", 1); break;   /* bước 11 */
+        case 1: coop_menu(); break;
         case 2: not_yet("Quet thiet bi", 2); break;
         case 3: not_yet("Vao mot chuong", 2); break;
         case 4: not_yet("Tong quan chuong", 3); break;
         case 5: not_yet("Gui lenh tho", 1); break;     /* bước 12 */
         }
     }
+    coop_free_all();           /* dữ liệu đã được lưu sau mỗi thay đổi */
     printf("Tam biet.\n");
     return 0;
 }

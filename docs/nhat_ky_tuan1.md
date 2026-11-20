@@ -18,6 +18,7 @@
 | 8 | Long | Bảng điều phối lệnh HELLO/INFO/BYE + discovery giả + test tích hợp | `device/handlers.h/.c`, `device/discovery.h/.c`, `tests/smoke_server.py` |
 | 9 | Minh | Bộ công cụ nhập/xuất an toàn | `controller/ui.h/.c` |
 | 10 | Minh | App ID + menu chính | `controller/main.c` |
+| 11 | Minh | **Quản lý chuồng nuôi** (tiêu chí 13) | `controller/coop.h/.c` |
 
 ---
 
@@ -510,4 +511,54 @@ $ ./bin/controller                     → App ID: aee80fb9 (giữ nguyên, khô
 $ ./bin/controller -d data2            → [i] Da khoi tao App ID moi: 78c60b6c
 $ echo 'app_id=zz' > data2/app.conf; ./bin/controller -d data2
 [LOI] data2/app.conf khong hop le, sinh App ID moi
+```
+
+---
+
+## Bước 11: `controller/coop.c`, quản lý chuồng nuôi (Minh). TIÊU CHÍ 13
+
+**Commit:** `Bước 11: coop.c - CRUD chuồng, thiết bị trong chuồng, lưu coops.txt (tiêu chí 13)`
+
+### Đã làm
+- **Dữ liệu**: mảng động `coop_t` (nhân đôi khi đầy). Mỗi chuồng có mảng động `coop_device_t` riêng.
+- **CRUD**: `coop_add / coop_edit / coop_remove / coop_find`, `coop_add_device / coop_remove_device / coop_find_device`.
+- **Kiểm tra**: tên/vị trí không rỗng, không dài quá, không chứa `=`. Dấu cách tự đổi thành `_`. Tên chuồng không trùng. `capacity > 0`. `0 ≤ chickens ≤ capacity`. **Một thiết bị chỉ thuộc một chuồng.**
+- **Lưu/nạp** `<data>/coops.txt` (ghi file tạm rồi `rename`). Lưu ngay sau mỗi thay đổi.
+- **Menu**: danh sách, thêm, sửa (Enter giữ giá trị cũ), xoá (hỏi xác nhận), xem thiết bị, thêm thiết bị **nhập tay**, xoá thiết bị.
+- `main.c`: gọi `coop_load` khi khởi động, `coop_free_all` khi thoát. Mục 1 của menu chính mở `coop_menu`.
+
+### Tại sao
+- **Chuồng lưu ở controller**: đây là cách người dùng tổ chức thiết bị. Thiết bị không cần biết mình thuộc chuồng nào.
+- **`coop_device_t` không chứa trạng thái kết nối**: file `coops.txt` chỉ lưu thứ cần để **tìm lại** thiết bị (ID, IP, port). Kết nối và token thuộc về `conn.c`, chỉ nằm trong bộ nhớ.
+- **Định dạng file giống giao thức (`key=value`)**: dùng lại `split_words` + `kv_get_*`, không phải viết bộ phân tích mới.
+- **Đổi dấu cách thành `_`, cấm `=`**: file tách theo dấu cách và `=`. Tên `"Chuong A"` mà để nguyên dấu cách thì khi đọc lại sẽ thành 2 từ.
+- **Lưu ngay sau mỗi thay đổi** (không đợi lúc thoát): nếu app bị kill thì không mất dữ liệu.
+- **Dòng hỏng thì cảnh báo và bỏ qua**: người dùng có thể sửa tay file. Một dòng sai không được làm mất toàn bộ dữ liệu.
+- **Cảnh báo về `realloc`**: khi mảng chuồng được nới rộng, nó có thể bị **dời sang vùng nhớ khác**, mọi con trỏ `coop_t*` cũ thành con trỏ treo. Vì vậy `menu_add_device` chỉ giữ `cid` (ID chuồng) rồi `coop_find(cid)` lại trước khi dùng.
+- **`coop_remove` phải `free(devs)` trước `memmove`**: nếu không thì rò rỉ bộ nhớ (valgrind sẽ báo ở tuần 4).
+- **Thêm thiết bị nhập tay** chỉ là tạm thời: tuần 2 thay bằng thêm từ kết quả quét. `coop_find_device` đã sẵn để đánh dấu "đã thêm" khi quét.
+
+### Kiểm tra
+```
+[OK] Da them chuong ID 1                                   ← "Chuong A", "Khu 1", 500, 420
+[LOI] Da co chuong ten 'Chuong_A'                          ← thêm trùng tên
+[LOI] So ga phai trong khoang 0..300 (suc chua)            ← 400 gà > 300 sức chứa
+[OK] Da them chuong ID 2
+[OK] Da them FAN-8A21 vao chuong 'Chuong_A'
+[LOI] Thiet bi FAN-8A21 da thuoc chuong 'Chuong_A'         ← thêm cùng thiết bị vào chuồng 2
+Ten [Chuong_B]: Vi tri [Khu_2]: ... [OK] Da cap nhat chuong 2
+
+$ cat data/coops.txt
+coop id=1 name=Chuong_A location=Khu_1 capacity=500 chickens=420 created=2026-11-20
+dev coop=1 id=FAN-8A21 type=FAN ip=127.0.0.1 port=7000 name=Quat_1
+coop id=2 name=Chuong_B location=Khu_3 capacity=300 chickens=100 created=2026-11-20
+
+Mở lại app → 1. Danh sach chuong:
+ID  | Ten              | Vi tri       | Ga/Suc chua | Thiet bi | Ngay tao
+1   | Chuong_A         | Khu_1        | 420/500     | 1        | 2026-11-20
+2   | Chuong_B         | Khu_3        | 100/300     | 0        | 2026-11-20
+
+Sửa tay capacity=abc ở dòng 4 → mở lại:
+[LOI] data/coops.txt:4: bo qua dong hong
+[i] Da nap 1 chuong (bo qua 1 dong hong)
 ```
