@@ -12,6 +12,7 @@
 | 2 | Long | Tiện ích chung + framework test | `common/util.h/.c`, `tests/test.h`, `tests/test_util.c` |
 | 3 | Long | **Xử lý truyền dòng** (tiêu chí 1) | `common/net_io.h/.c`, `tests/test_netio.c` |
 | 4 | Minh | Tách lệnh, đọc/ghi key=value | `common/kv.h/.c`, `tests/test_kv.c` |
+| 5 | Long | **Khởi tạo thông số** (tiêu chí 4): nạp/lưu thiết bị, sinh ID | `device/device.c`, `config/coop_A.conf`, `config/coop_B.conf` |
 
 ---
 
@@ -203,3 +204,62 @@ Vẽ ra giấy bộ đệm `[I N F O _ F A]` → `[I N F O _ F A N - 1 \n I N ..
 [PASS] resp_code dong sai -> -1
 ```
 🔁 **Bàn giao H3**: Long dùng `kv.c` ngay ở bước 5 (`device.c`).
+
+---
+
+## Bước 5: `device.c` + file cấu hình, khởi tạo thông số (Long). TIÊU CHÍ 4
+
+**Commit:** `Bước 5: device.c - nạp config, mặc định, sinh ID, lưu data/ (tiêu chí 4)`
+
+### Đã làm
+| Hàm | Mục đích |
+|---|---|
+| `device_set_defaults` | Điền mặc định theo bảng 4.1 (Tmax=32, W=5kg, lịch 06:00/11:00/17:00, …) |
+| `device_set_param` | Đặt **một** thông số theo tên key. Dùng lại cho lệnh `SET` ở tuần 3 |
+| `device_validate` + `validate_cross` | Kiểm tra khoảng giá trị, `Tp1 < Tmax`, `Tmin < Tp2`, `Hmin < Hp`, và ràng buộc chéo `Tp2(đèn) < Tp1(quạt)` |
+| `device_params_to_kv` | Thông số thành `" Tmax=32.0 Tp1=28.0"`. Dùng chung cho lưu file và lệnh `INFO` |
+| `parse_device_words` | Đọc dòng `device type=... name=... key=...` |
+| `gen_unique_id` | `FAN-8A21` = tiền tố + 4 hex ngẫu nhiên, lặp đến khi không trùng |
+| `devices_load` | Lần đầu: config, rồi mặc định, rồi sinh ID, rồi lưu. Lần sau: nạp từ `data/` |
+| `devices_save` | Ghi vào file tạm rồi `rename()` |
+
+`device/main.c` tạm thời: nạp thiết bị, in bảng rồi thoát.
+
+### Tại sao
+- **Tách config gốc và file trạng thái**: `config/coop_A.conf` do người viết (không có ID). `data/devices_coop_A.conf` do chương trình sinh (có ID, mật khẩu đã đổi, thông số đã SET). Nhờ vậy ID **ổn định** qua các lần chạy. Controller đã lưu ID vào chuồng, ID mà đổi thì mất liên kết.
+- **Điền mặc định trước, ghi đè sau**: dòng config thiếu key nào thì dùng mặc định của key đó. Demo được "khởi tạo thông số" bằng cách cố ý bỏ trống vài key.
+- **`device_set_param` dùng chung cho config và `SET`**: một chỗ kiểm tra kiểu dữ liệu, tuần 3 không phải viết lại.
+- **Báo lỗi `file:dòng: lý do` rồi thoát**: chạy với cấu hình vô lý (quạt tắt ở 40°C trong khi bật ở 32°C) còn tệ hơn không chạy.
+- **Ràng buộc chéo**: nếu đèn sưởi tắt ở 30°C mà quạt đã bật từ 28°C thì trong khoảng 28–30°C cả hai cùng chạy.
+- **`rename()` là thao tác nguyên tử**: nếu bị tắt khi đang ghi thì file tạm hỏng, còn file thật vẫn là bản cũ nguyên vẹn.
+
+### Lỗi gặp phải (bài học)
+Lần chạy đầu **treo vô hạn**. Nguyên nhân: `gen_unique_id` ghi ID ứng viên **thẳng vào `d->id`**, rồi gọi `device_find(d->id)` để kiểm tra trùng. Hàm này tìm thấy **chính thiết bị `d`**, nên ID nào cũng bị coi là trùng.
+**Sửa:** sinh vào biến tạm `cand`, kiểm tra xong mới chép vào `d->id`.
+
+### Kiểm tra
+```
+$ make reset-data && ./bin/device_sim                  (lần 1)
+[i] Lan chay dau: sinh ID moi cho 7 thiet bi
+device_sim/1.0  config=coop_A  TCP=7000  devices=7
+  ENV-D7C3  ENV_SENSOR   Cam_bien_1   interval=1
+  EGG-F88E  EGG_COUNTER  Dem_trung_1  capacity=300 rate=12.0
+  FED-82F1  FEEDER       May_an_1     W=5.0 stock=100.0 times=06:00,11:00,17:00
+  WAT-EEB3  WATERER      May_uong_1   Vw=10.0 tank=500.0 times=06:00,11:00,17:00
+  FAN-2E08  FAN          Quat_1       Tmax=32.0 Tp1=28.0
+  HEA-F7D2  HEATER       Den_1        Tmin=18.0 Tp2=22.0
+  MIS-8642  MISTER       Phun_1       Hmin=55.0 Hp=70.0 Vh=2.0
+
+$ ./bin/device_sim                                     (lần 2)
+[i] Nap trang thai tu data/devices_coop_A.conf
+  ENV-D7C3 ...                                         ← ID giống hệt lần 1
+
+Cấu hình sai (mỗi dòng là một lần thử):
+Loi cau hinh: /tmp/bad.conf:22: Tp1=40.0 phai nho hon Tmax=32.0
+Loi cau hinh: Tp2 cua HEA-C4B6 (30.0) phai nho hon Tp1 cua FAN-D0A9 (28.0)
+Loi cau hinh: /tmp/bad.conf:20: W='abc' khong phai so
+Loi cau hinh: /tmp/bad.conf:24: thong so 'Tmax' khong ap dung cho MISTER
+Loi cau hinh: /tmp/bad.conf:22: type='QUAT' khong hop le
+(tất cả thoát với mã 1)
+```
+WATERER và HEATER không ghi thông số trong config, nên nhận mặc định (`Vw=10`, `Tmin=18`, `Tp2=22`). Đây là bằng chứng cho tiêu chí 4.
