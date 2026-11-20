@@ -13,6 +13,7 @@
 | 3 | Long | **Xử lý truyền dòng** (tiêu chí 1) | `common/net_io.h/.c`, `tests/test_netio.c` |
 | 4 | Minh | Tách lệnh, đọc/ghi key=value | `common/kv.h/.c`, `tests/test_kv.c` |
 | 5 | Long | **Khởi tạo thông số** (tiêu chí 4): nạp/lưu thiết bị, sinh ID | `device/device.c`, `config/coop_A.conf`, `config/coop_B.conf` |
+| 6 | Long | Ghi log từng thiết bị (tiêu chí 12, phần nền) | `device/dlog.h/.c` |
 
 ---
 
@@ -263,3 +264,40 @@ Loi cau hinh: /tmp/bad.conf:22: type='QUAT' khong hop le
 (tất cả thoát với mã 1)
 ```
 WATERER và HEATER không ghi thông số trong config, nên nhận mặc định (`Vw=10`, `Tmin=18`, `Tp2=22`). Đây là bằng chứng cho tiêu chí 4.
+
+---
+
+## Bước 6: `dlog`, ghi log từng thiết bị (Long). TIÊU CHÍ 12 (phần nền)
+
+**Commit:** `Bước 6: dlog.c - log riêng từng thiết bị`
+
+### Đã làm
+- `dlog_open_all` / `dlog_close_all`: mở/đóng `logs/<id>.log` chế độ ghi nối.
+- `dlog(dev, mức, app_id, fmt, ...)`: ghi một dòng cho một thiết bị. `app_id = NULL` nghĩa là nguồn "auto".
+- `dlog_all(...)`: ghi cùng một dòng cho mọi thiết bị (khởi động / tắt).
+- `dlog_set_min_level`, `dlog_set_echo`: ẩn DEBUG, bật/tắt in ra màn hình.
+- `main.c` tạm thời: ghi thử vài dòng rồi thoát.
+
+### Tại sao
+- **Làm log ngay tuần 1** dù tiêu chí 12 chấm ở cuối: từ bước này, module nào viết thêm cũng gọi `dlog` luôn. Để cuối kỳ mới chèn log vào thì rất dễ sót sự kiện.
+- **Một file cho mỗi thiết bị**: đề bài ghi "ghi log hoạt động **trên mỗi thiết bị**".
+- **Chế độ `"a"` (append)**: giữ log của các lần chạy trước.
+- **`fflush` sau mỗi dòng**: `fprintf` chỉ ghi vào bộ đệm của stdio. Nếu Ctrl+C hoặc crash trước khi bộ đệm đầy thì mất log, đúng lúc cần log nhất.
+- **`vlog` nhận `va_list`**: `dlog` và `dlog_all` cùng dùng một hàm lõi. Chú ý `va_list` **chỉ duyệt được một lần**, nên trong vòng lặp của `dlog_all` phải `va_start` / `va_end` lại mỗi vòng.
+- **`__attribute__((format(printf,...)))`**: gcc kiểm tra định dạng `%d` / `%s` của lời gọi `dlog` giống như với `printf`.
+- **Cột "nguồn"** (`app=7f3a9c21` hoặc `auto`): biết **ai** gây ra sự kiện. Tuần 2 ghi App ID khi kết nối, đổi mật khẩu.
+
+### Kiểm tra
+```
+$ ./bin/device_sim
+...
+[log FAN-2E08] INFO  thu ghi log rieng cho quat
+$ ls logs
+EGG-F88E.log  ENV-D7C3.log  FAN-2E08.log  FED-82F1.log  HEA-F7D2.log  MIS-8642.log  WAT-EEB3.log
+$ cat logs/FAN-2E08.log
+2026-11-20 14:06:19 | sim --:-- | INFO  | auto         | device_sim started (coop_A, tcp 7000)
+2026-11-20 14:06:19 | sim --:-- | INFO  | auto         | thu ghi log rieng cho quat
+2026-11-20 14:06:19 | sim --:-- | INFO  | auto         | device_sim stopped
+```
+Dòng DEBUG không xuất hiện (đã bị lọc). Chạy lần 2 thì file dài thêm (ghi nối).
+Ghi chú: giờ trong log là **UTC** vì WSL chưa đặt múi giờ. Sửa bằng `sudo ln -sf /usr/share/zoneinfo/Asia/Ho_Chi_Minh /etc/localtime` hoặc chạy với `TZ=Asia/Ho_Chi_Minh`.

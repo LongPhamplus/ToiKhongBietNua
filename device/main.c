@@ -4,6 +4,7 @@
  */
 #include <stdio.h>
 #include "device.h"
+#include "dlog.h"
 #include "kv.h"
 #include "util.h"
 
@@ -28,5 +29,13 @@ int main(int argc, char *argv[])
         device_params_to_kv(d, params, sizeof params);
         printf("  %-9s %-12s %-12s%s\n", d->id, dev_type_to_str(d->type), d->name, params);
     }
+
+    if (dlog_open_all() != 0)
+        die("logs");
+    dlog_all(DLOG_INFO, "device_sim started (%s, tcp %d)", cfg->conf_name, cfg->tcp_port);
+    dlog(device_find_first(DEV_FAN), DLOG_INFO, NULL, "thu ghi log rieng cho quat");
+    dlog(device_find_first(DEV_FAN), DLOG_DEBUG, NULL, "dong DEBUG nay bi an");
+    dlog_all(DLOG_INFO, "device_sim stopped");
+    dlog_close_all();
     return 0;
 }

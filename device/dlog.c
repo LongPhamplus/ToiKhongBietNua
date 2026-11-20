@@ -1,37 +1,97 @@
 /*
- * =============================================================================
- * FILE        : device/dlog.c
- * PHỤ TRÁCH   : Long
- * PHASE       : 1 (ghi log), 4 (dlog_tail cho lệnh LOG, rà soát đủ sự kiện)
- * TIÊU CHÍ    : 12. Ghi log hoạt động trên mỗi thiết bị (1 điểm)
- * =============================================================================
+ * device/dlog.c: cài đặt log từng thiết bị (Long). TIÊU CHÍ 12.
  *
- * VIỆC CẦN LÀM
- *   [ ] dlog: định dạng một dòng (xem logs/README.md):
- *         "<now_str> | sim <hh:mm> | <MỨC> | app=<id>/auto | <nội dung>"
- *       Dùng va_list + vfprintf. Gọi fflush sau mỗi dòng để Ctrl+C không mất log.
- *       Giờ mô phỏng lấy từ env_clock_minute() (env.h).
- *       Đồng thời in ra stdout nếu mức >= INFO, để terminal device_sim "kể chuyện" khi demo.
- *   [ ] Nội dung log KHÔNG được chứa mật khẩu hay token đầy đủ. Token chỉ in
- *       4 ký tự đầu + "...".
- *   [ ] dlog_tail: cách đơn giản là đọc cả file bằng fgets, giữ n dòng cuối trong
- *       mảng vòng (ring buffer). Đủ nhanh vì file log nhỏ.
- *
- *   DANH SÁCH SỰ KIỆN BẮT BUỘC (Phase 4: Long rà phía server, Minh rà phần của Minh)
- *   [ ] Bị quét (SCAN) bởi app nào                       : discovery.c (Minh)
- *   [ ] CONNECT thành công / thất bại / bị khoá          : auth.c
- *   [ ] DISCONNECT, token hết hạn                        : auth.c
- *   [ ] Đổi mật khẩu (không ghi mật khẩu)                : auth.c
- *   [ ] POWER, MODE (cũ -> mới)                          : handlers.c
- *   [ ] Mọi SET (key: cũ -> mới), SCHED ADD/DEL          : handlers.c, dev_feed.c
- *   [ ] ACT (ai bấm, hành động gì)                       : dev_*.c
- *   [ ] Tự bật/tắt quạt, đèn, phun sương (kèm số đo)     : dev_climate.c, dev_mister.c
- *   [ ] Mỗi lần cho ăn/uống theo lịch, bồn cạn           : dev_feed.c
- *   [ ] Máng trứng đầy, thu trứng                        : dev_feed.c
- *   [ ] Khởi động / tắt device_sim                       : main.c
- *
- * KIỂM THỬ
- *   [ ] Sau một phiên demo, mỗi file log đều có đủ các loại sự kiện ở trên.
- *   [ ] grep mật khẩu mặc định "123456" trong logs/: không thấy.
- * =============================================================================
+ * Định dạng một dòng:
+ *   2026-11-26 20:10:01 | sim --:-- | INFO  | auto         | device_sim started
+ *   thời gian thực       giờ mô phỏng  mức    nguồn          nội dung
+ * Giờ mô phỏng tạm ghi "--:--", tuần 3 lấy từ env.c.
  */
+#include "dlog.h"
+#include "util.h"
+
+#include <stdarg.h>
+#include <stdio.h>
+
+#define LOG_DIR "logs"
+
+static dlog_level_t g_min = DLOG_INFO;
+static int          g_echo = 1;
+
+static const char *LEVEL_NAME[] = { "DEBUG", "INFO ", "WARN ", "ERROR" };
+
+void dlog_set_min_level(dlog_level_t lv) { g_min = lv; }
+void dlog_set_echo(int on)               { g_echo = on; }
+
+int dlog_open_all(void)
+{
+    if (ensure_dir(LOG_DIR) != 0)
+        return -1;
+    for (int i = 0; i < device_count(); i++) {
+        device_t *d = device_at(i);
+        char path[64];
+        snprintf(path, sizeof path, LOG_DIR "/%s.log", d->id);
+        /* "a" = ghi nối vào cuối: log của các lần chạy trước được giữ lại */
+        d->log = fopen(path, "a");
+        if (!d->log)
+            return -1;
+    }
+    return 0;
+}
+
+void dlog_close_all(void)
+{
+    for (int i = 0; i < device_count(); i++) {
+        device_t *d = device_at(i);
+        if (d->log) {
+            fclose(d->log);
+            d->log = NULL;
+        }
+    }
+}
+
+static void vlog(device_t *d, dlog_level_t lv, const char *app_id, const char *fmt, va_list ap)
+{
+    char ts[32], msg[MAX_LINE];
+    now_str(ts, sizeof ts);
+    vsnprintf(msg, sizeof msg, fmt, ap);
+
+    char src[16];
+    if (app_id)
+        snprintf(src, sizeof src, "app=%s", app_id);
+    else
+        snprintf(src, sizeof src, "auto");
+
+    if (d->log) {
+        fprintf(d->log, "%s | sim --:-- | %s | %-12s | %s\n", ts, LEVEL_NAME[lv], src, msg);
+        /* fflush ngay: nếu chương trình bị Ctrl+C / crash thì log vẫn đã nằm trên đĩa,
+         * không bị kẹt trong bộ đệm của stdio */
+        fflush(d->log);
+    }
+    if (g_echo)
+        printf("[log %s] %s %s\n", d->id, LEVEL_NAME[lv], msg);
+}
+
+void dlog(device_t *d, dlog_level_t lv, const char *app_id, const char *fmt, ...)
+{
+    if (!d || lv < g_min)
+        return;
+    va_list ap;
+    va_start(ap, fmt);
+    vlog(d, lv, app_id, fmt, ap);
+    va_end(ap);
+}
+
+void dlog_all(dlog_level_t lv, const char *fmt, ...)
+{
+    if (lv < g_min)
+        return;
+    int echo = g_echo;
+    g_echo = 0;                     /* không in 7 dòng giống nhau ra màn hình */
+    for (int i = 0; i < device_count(); i++) {
+        va_list ap;
+        va_start(ap, fmt);          /* va_list chỉ dùng được một lần, nên mỗi vòng phải va_start lại */
+        vlog(device_at(i), lv, NULL, fmt, ap);
+        va_end(ap);
+    }
+    g_echo = echo;
+}
