@@ -15,6 +15,7 @@
 #include <string.h>
 #include <unistd.h>
 
+#include "conn.h"
 #include "coop.h"
 #include "protocol.h"
 #include "ui.h"
@@ -93,6 +94,7 @@ int main(int argc, char *argv[])
     if (load_or_create_app_id() != 0)
         return 1;
     coop_load(g_data_dir);
+    conn_init(g_app_id);
 
     static const char *items[] = {
         "Quan ly chuong nuoi",
@@ -102,8 +104,9 @@ int main(int argc, char *argv[])
         "[DEV] Gui lenh tho",
     };
     for (;;) {
-        char title[96];
-        snprintf(title, sizeof title, "CHICKEN FARM CONTROLLER | App ID: %s", g_app_id);
+        char title[128];
+        snprintf(title, sizeof title, "CHICKEN FARM CONTROLLER | App ID: %s | Chuong: %d | Dang ket noi: %d",
+                 g_app_id, coop_count(), conn_connected_count());
         int c = ui_menu(title, items, 5, "Thoat");
         if (c <= 0)
             break;                      /* 0 = Thoát, -1 = hết dữ liệu vào */
@@ -112,9 +115,10 @@ int main(int argc, char *argv[])
         case 2: not_yet("Quet thiet bi", 2); break;
         case 3: not_yet("Vao mot chuong", 2); break;
         case 4: not_yet("Tong quan chuong", 3); break;
-        case 5: not_yet("Gui lenh tho", 1); break;     /* bước 12 */
+        case 5: conn_raw_console(); break;
         }
     }
+    conn_shutdown();
     coop_free_all();           /* dữ liệu đã được lưu sau mỗi thay đổi */
     printf("Tam biet.\n");
     return 0;

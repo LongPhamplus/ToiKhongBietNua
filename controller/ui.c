@@ -7,6 +7,7 @@
  * Cách đúng: đọc cả dòng bằng fgets, rồi tự phân tích bằng parse_*_strict (kv.c).
  */
 #include "ui.h"
+#include "conn.h"
 #include "kv.h"
 #include "protocol.h"
 #include "util.h"
@@ -196,6 +197,13 @@ void ui_info(const char *fmt, ...) { va_list ap; va_start(ap, fmt); vmsg("\033[3
 const char *ui_explain_code(int code)
 {
     switch (code) {
+    /* Lỗi phía client (conn.h) */
+    case CONN_ERR_CLOSED:    return "Mat ket noi toi thiet bi.";
+    case CONN_ERR_TIMEOUT:   return "Thiet bi khong phan hoi.";
+    case CONN_ERR_IO:        return "Loi mang.";
+    case CONN_ERR_NOSESSION: return "Chua ket noi toi thiet bi nay.";
+    case CONN_ERR_BADRESP:   return "Phan hoi sai dinh dang.";
+    /* Mã phản hồi của thiết bị */
     case RC_OK:             return "Thanh cong.";
     case RC_BAD_REQUEST:    return "Lenh sai cu phap.";
     case RC_AUTH_FAILED:    return "Sai mat khau.";

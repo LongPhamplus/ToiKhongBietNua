@@ -19,6 +19,7 @@
 | 9 | Minh | Bộ công cụ nhập/xuất an toàn | `controller/ui.h/.c` |
 | 10 | Minh | App ID + menu chính | `controller/main.c` |
 | 11 | Minh | **Quản lý chuồng nuôi** (tiêu chí 13) | `controller/coop.h/.c` |
+| 12 | Minh | Kết nối TCP có timeout + mục "[DEV] Gửi lệnh thô" | `controller/conn.h/.c`, `tests/fake_device.py` |
 
 ---
 
@@ -561,4 +562,51 @@ ID  | Ten              | Vi tri       | Ga/Suc chua | Thiet bi | Ngay tao
 Sửa tay capacity=abc ở dòng 4 → mở lại:
 [LOI] data/coops.txt:4: bo qua dong hong
 [i] Da nap 1 chuong (bo qua 1 dong hong)
+```
+
+---
+
+## Bước 12: `controller/conn.c`, khung kết nối TCP (Minh). Chuẩn bị TIÊU CHÍ 6
+
+**Commit:** `Bước 12: conn.c - kết nối TCP có timeout, [DEV] gửi lệnh thô`
+
+### Đã làm
+| Thành phần | Mục đích |
+|---|---|
+| `CONN_ERR_*` (số âm) | Lỗi phía client, không trùng mã 200–500 của thiết bị |
+| `session_t` + bảng phiên | Tuần 2 lưu token và kết nối từng thiết bị. Tuần 1 mới khai báo |
+| `conn_open(host, port)` | `getaddrinfo` (nhận cả IP lẫn tên máy), `socket`, `connect`. `ECONNREFUSED` thì gợi ý "device_sim đã chạy chưa?" |
+| `conn_raw(fd, lb, cmd, resp)` | Gửi một dòng (`send_line`), đọc đúng một dòng (`read_line_blocking`, 3 giây). Trả mã phản hồi hoặc `CONN_ERR_*` |
+| `conn_cmd(id, resp, fmt, ...)` | Hàm mọi màn hình dùng từ tuần 2: `"SET Tmax=31"` thành `"SET <id> <token> Tmax=31"`. Tuần 1 trả `NOSESSION` |
+| `conn_raw_console()` | Menu **5. [DEV] Gửi lệnh thô**: nhập IP/port, gõ lệnh tự do, in phản hồi |
+| `ui_explain_code` | Thêm câu tiếng Việt cho các mã `CONN_ERR_*` |
+| `tests/fake_device.py` | Giả làm thiết bị (thay `nc -l`) với 3 kịch bản lỗi |
+
+### Tại sao
+- **Một cầu nối duy nhất**: tuần 2 thêm token chỉ cần sửa `conn_cmd`, mọi màn hình tự có. Nếu mỗi màn hình tự `send`/`recv` thì phải sửa 10 chỗ.
+- **Bắt buộc có timeout**: thiết bị treo mà client `recv` không giới hạn thì **cả menu treo theo**.
+- **Hết giờ thì đóng kết nối**: phản hồi đến muộn sẽ bị đọc nhầm thành phản hồi của lệnh **kế tiếp**, khi đó mọi kết quả về sau đều lệch.
+- **Mỗi lệnh đọc đúng một dòng**: giao thức là hỏi một, đáp một. Bộ đệm `linebuf` giữ phần dư nếu server gửi dồn.
+- **Mã lỗi âm**: một biến `int` vừa mang mã của thiết bị (`404`) vừa mang lỗi mạng (`-2`), người gọi chỉ cần `if (code < 0)`.
+- **`getaddrinfo`** thay `inet_addr`: nhập được `localhost` hoặc tên máy trong mạng LAN.
+- **Chưa có timeout cho `connect`**: nhập sai IP thì có thể chờ khoảng 2 phút. Tuần 2 thêm (`connect` non-blocking + `select`).
+
+### Kiểm tra
+Với `tests/fake_device.py` đóng vai thiết bị (cổng 7100):
+```
+Chon: 5   IP [127.0.0.1]:   Port [7000]: 7100
+[OK] Da ket noi 127.0.0.1:7100. ...
+Lenh> HELLO
+200 OK hi
+Lenh> HELLO                                          (thiết bị im lặng 4 giây)
+[LOI] Thiet bi khong phan hoi.                       ← sau 3 giây
+
+Lenh> HELLO                                          (thiết bị đóng kết nối)
+[LOI] Mat ket noi toi thiet bi.
+
+Lenh> HELLO                                          (thiết bị trả "xin chao")
+[LOI] Phan hoi sai dinh dang.
+
+Port 7199 (không có ai nghe):
+[LOI] Khong ket noi duoc 127.0.0.1:7199 (device_sim da chay chua?)
 ```
