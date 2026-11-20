@@ -17,6 +17,7 @@
 | 7 | Long | **Vòng `select()` + quản lý client** (tiêu chí 2) | `device/main.c`, `device/server.h/.c` |
 | 8 | Long | Bảng điều phối lệnh HELLO/INFO/BYE + discovery giả + test tích hợp | `device/handlers.h/.c`, `device/discovery.h/.c`, `tests/smoke_server.py` |
 | 9 | Minh | Bộ công cụ nhập/xuất an toàn | `controller/ui.h/.c` |
+| 10 | Minh | App ID + menu chính | `controller/main.c` |
 
 ---
 
@@ -470,3 +471,43 @@ Mat khau: -> r=0 pass_len=4
 ```
 Hết dữ liệu giữa chừng: mọi hàm trả `-1`, chương trình chạy tới cuối và thoát với mã 0, **không lặp vô hạn**.
 Nhập 200 ký tự: `[LOI] Noi dung qua dai (toi da 62 ky tu)`, hỏi lại, câu sau đọc đúng.
+
+---
+
+## Bước 10: `controller/main.c`, App ID + menu chính (Minh)
+
+**Commit:** `Bước 10: controller main - App ID, tham số -d, menu chính`
+
+### Đã làm
+- `load_or_create_app_id()`: đọc `app_id=` trong `<data>/app.conf`, kiểm tra đúng 8 ký tự hex. Thiếu hoặc sai thì `random_hex(4)`, ghi file, báo cho người dùng.
+- Tham số `-d <thư mục data>` (mặc định `data`).
+- `signal(SIGPIPE, SIG_IGN)`.
+- Menu chính 5 mục + `0. Thoat`. Các mục chưa làm tạm báo "sẽ làm ở tuần X".
+
+Kế hoạch ghi mục "[DEV] Gửi lệnh thô" là số 9. Thực tế dùng **số 5**, vì `ui_menu` đánh số liên tiếp.
+
+### Tại sao
+- **App ID lưu file**: đề bài ghi "mỗi ứng dụng **cài đặt**", tức App ID gắn với một bản cài đặt, không phải với mỗi lần chạy. Nếu mỗi lần chạy sinh App ID mới thì token (tuần 2) mất ý nghĩa.
+- **Kiểm tra định dạng khi đọc**: file có thể bị sửa tay hỏng. Đọc phải giá trị rác thì gửi lên thiết bị sẽ bị từ chối.
+- **`-d`**: hai controller trên cùng máy thì cần hai App ID. Mỗi thư mục `data` là một "bản cài đặt".
+- **Menu quay lại khi nhận `-1`**: kế thừa quy ước của `ui.c`. Ctrl+D ở menu chính thì thoát sạch.
+
+### Kiểm tra
+```
+$ rm data/app.conf; ./bin/controller
+[i] Da khoi tao App ID moi: aee80fb9
+=== CHICKEN FARM CONTROLLER | App ID: aee80fb9 ===
+1. Quan ly chuong nuoi
+2. Quet thiet bi
+3. Vao mot chuong
+4. Tong quan chuong
+5. [DEV] Gui lenh tho
+0. Thoat
+Chon: 2
+[i] Chuc nang 'Quet thiet bi' se lam o tuan 2.
+
+$ ./bin/controller                     → App ID: aee80fb9 (giữ nguyên, không báo khởi tạo)
+$ ./bin/controller -d data2            → [i] Da khoi tao App ID moi: 78c60b6c
+$ echo 'app_id=zz' > data2/app.conf; ./bin/controller -d data2
+[LOI] data2/app.conf khong hop le, sinh App ID moi
+```
