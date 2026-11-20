@@ -36,6 +36,9 @@ TEST_BIN   := $(TEST_SRC:tests/%.c=$(BIN)/%)
 
 .PHONY: all device controller test run-device run-device2 run-ctrl clean reset-data sanitize
 
+# Giữ lại các .o trung gian của test (mặc định make tự xoá, lần sau phải dịch lại)
+.SECONDARY:
+
 all: $(BIN)/device_sim $(BIN)/controller
 
 device: $(BIN)/device_sim

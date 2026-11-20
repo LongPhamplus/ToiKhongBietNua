@@ -9,6 +9,7 @@
 | Bước | Người | Nội dung | File |
 |---|---|---|---|
 | 1 | Long | Phần dùng chung: hằng số, mô hình thiết bị, Makefile | `common/protocol.h`, `device/device.h`, `Makefile`, `.gitignore`, `.gitattributes` |
+| 2 | Long | Tiện ích chung + framework test | `common/util.h/.c`, `tests/test.h`, `tests/test_util.c` |
 
 ---
 
@@ -48,3 +49,49 @@ Lần build đầu có warning `"/*" within comment` vì chú thích hướng d�
 1. Viết `protocol.h` theo bảng ở `docs/tuan1_code.md` mục 0-A. Kiểm tra bằng một file `.c` rỗng chỉ include nó.
 2. Viết `device.h`, đối chiếu tên trường với người kia.
 3. Viết Makefile, thử `touch common/protocol.h && make`: phải thấy mọi file được dịch lại.
+
+---
+
+## Bước 2: `common/util` + framework test (Long)
+
+**Commit:** `Bước 2: util.c (random_hex, now_ms, trim, ...) + test`
+
+### Đã làm
+| Hàm | Dùng để |
+|---|---|
+| `random_hex(out, n)` | Sinh ID thiết bị (bước 5), App ID (bước 10), token (tuần 2) |
+| `now_ms()` | Tính timeout `select`, nhịp tick |
+| `now_str()`, `today_str()` | Thời gian trong log, ngày tạo chuồng |
+| `trim()`, `safe_copy()`, `str_upper()` | Xử lý chuỗi an toàn |
+| `ensure_dir()` | Tạo `data/`, `logs/` khi khởi động |
+| `die()` | Thoát khi lỗi khởi động |
+
+Thêm `tests/test.h`: hai macro `CHECK` và `TEST_DONE` để viết test ngắn gọn, `make test` dừng ngay khi có `[FAIL]`.
+
+### Tại sao
+- **`/dev/urandom` thay vì `rand()`**: `rand()` chỉ là công thức toán. Biết seed (thường là `time(NULL)`) thì đoán được mọi giá trị, tức là đoán được token. `/dev/urandom` do kernel lấy từ nhiễu phần cứng.
+- **Lặp `read()`**: `read` được phép trả về ít byte hơn yêu cầu. Đây là cùng một bài học với `recv` ở bước 3.
+- **`CLOCK_MONOTONIC`**: `time()` nhảy lùi nếu người dùng chỉnh đồng hồ, lúc đó timeout tính sai. Đồng hồ monotonic chỉ tăng.
+- **`localtime_r`** (có hậu tố `_r`): `localtime` trả con trỏ tới vùng nhớ tĩnh dùng chung, không an toàn. Bản `_r` ghi vào biến của mình.
+- **`trim` dùng `memmove`**: vùng nguồn và đích chồng lên nhau. `memcpy` với vùng chồng nhau là hành vi không xác định.
+- **`isspace((unsigned char)c)`**: ký tự UTF-8 tiếng Việt có byte > 127. Kiểu `char` có dấu sẽ thành số âm, truyền số âm vào `isspace` là lỗi.
+
+### Kiểm tra
+```
+$ make test
+== bin/test_util
+[PASS] random_hex: dung 8 ky tu, chi gom 0-9a-f
+[PASS] random_hex: 1000 gia tri khong trung
+[PASS] random_hex(16) -> token 32 ky tu
+[PASS] trim("  abc \r\n") == "abc"
+[PASS] trim chuoi toan khoang trang -> rong
+[PASS] safe_copy cat dung khi src dai hon dst
+[PASS] str_upper
+[PASS] ensure_dir tao duoc thu muc
+[PASS] ensure_dir goi lan 2 khong loi
+[PASS] now_ms do duoc khoang 50ms
+```
+Phát sinh: make tự xoá `build/tests/test_util.o` (file trung gian). Đã thêm `.SECONDARY:` vào Makefile để giữ lại.
+
+### Tự code lại
+Viết test **trước** (chỉ cần prototype trong `util.h`), chạy thấy FAIL, rồi mới cài đặt hàm cho đến khi PASS.
