@@ -20,6 +20,7 @@
 | 10 | Minh | App ID + menu chính | `controller/main.c` |
 | 11 | Minh | **Quản lý chuồng nuôi** (tiêu chí 13) | `controller/coop.h/.c` |
 | 12 | Minh | Kết nối TCP có timeout + mục "[DEV] Gửi lệnh thô" | `controller/conn.h/.c`, `tests/fake_device.py` |
+| 13 | Cả hai | Tích hợp, kiểm tra cuối tuần, AddressSanitizer | `Makefile` |
 
 ---
 
@@ -610,3 +611,120 @@ Lenh> HELLO                                          (thiết bị trả "xin ch
 Port 7199 (không có ai nghe):
 [LOI] Khong ket noi duoc 127.0.0.1:7199 (device_sim da chay chua?)
 ```
+
+---
+
+## Bước 13: Tích hợp và kiểm tra cuối tuần (cả hai)
+
+**Commit:** `Bước 13: tích hợp tuần 1, sửa make sanitize, tổng kết nhật ký`
+
+### Kịch bản tích hợp đã chạy
+```
+Terminal 1:  ./bin/device_sim -c config/coop_A.conf
+Terminal 2:  ./bin/controller                 → 5. [DEV] Gui lenh tho  (giữ kết nối 3 giây)
+Terminal 3:  ./bin/controller -d data2        → 5. [DEV] Gui lenh tho  (cùng lúc, App ID khác)
+Terminal 4:  python3 tests/smoke_server.py    (cùng lúc)
+```
+Controller A:
+```
+Lenh> HELLO
+200 OK devices=7 server=device_sim/1.0
+Lenh> INFO FAN-2E08
+200 OK id=FAN-2E08 type=FAN name=Quat_1 power=ON mode=AUTO Tmax=32.0 Tp1=28.0
+Lenh> INFO XYZ
+404 NO_SUCH_DEVICE
+[i] Thiet bi khong ton tai tren may nay.
+```
+Controller B (App ID `a337859e`) nhận cùng kết quả, sau đó `BYE` → `200 OK`. Script smoke test: `==> TAT CA PASS`. Server phục vụ cả 3 nguồn xen kẽ, không treo.
+
+### AddressSanitizer
+`make sanitize` build lại toàn bộ với `-fsanitize=address,undefined`. Chạy smoke test + một phiên controller (thêm chuồng, thêm thiết bị, xoá chuồng, gửi lệnh) cho kết quả: **0 lỗi bộ nhớ, 0 rò rỉ, 0 hành vi không xác định**. 43/43 test đơn vị PASS dưới ASan.
+
+Phát sinh: lần đầu `make test` sau `make sanitize` không chạy được, vì object có `-fsanitize` nhưng lúc link test lại thiếu cờ. Đã sửa đích `sanitize` để build và chạy test với cùng cờ.
+
+### Checklist cuối tuần (theo `docs/tuan1_code.md`)
+**Build & test**
+- [x] `make clean && make`: 0 warning
+- [x] `make test`: 43 PASS (`test_util` 10, `test_netio` 9, `test_kv` 24)
+- [x] `make sanitize`: 43 PASS, ASan không báo lỗi
+
+**Server (Long)**
+- [x] Nhiều controller + client cùng lúc đều được phục vụ
+- [x] Một client ngắt giữa chừng, server vẫn chạy
+- [x] Lệnh bị cắt vụn / dồn dòng đều xử lý đúng
+- [x] Dòng 5000 byte → `400 LINE_TOO_LONG`, kết nối vẫn dùng được
+- [x] Ctrl+C rồi chạy lại ngay: không lỗi bind, ID giữ nguyên
+- [x] `make reset-data` thì sinh ID mới
+- [x] Không có client thì `tick` vẫn tăng
+
+**Client (Minh)**
+- [x] App ID giữ nguyên qua các lần chạy, `-d data2` cho App ID khác
+- [x] Dữ liệu chuồng còn nguyên sau khi khởi động lại
+- [x] Nhập rác / Enter rỗng / EOF không gây crash hay lặp vô hạn
+- [x] Timeout và mất kết nối được báo rõ ràng
+
+**Bàn giao cho tuần 2**
+- [x] H2 (`net_io`, `util`), H3 (`kv`), H4 (server chạy HELLO/INFO), H5 (`discovery.h` + bản giả)
+
+---
+
+## TỔNG KẾT TUẦN 1
+
+### Lịch sử commit
+```
+Bước 1   protocol.h, device.h, Makefile                              Long
+Bước 2   util.c (random_hex, now_ms, trim, ...) + test               Long
+Bước 3   net_io.c - bộ đệm dòng, send_all (tiêu chí 1)               Long
+Bước 4   kv.c - split_words, kv_get_*, parse_hhmm + test             Minh
+Bước 5   device.c - nạp config, mặc định, sinh ID (tiêu chí 4)      Long
+Bước 6   dlog.c - log riêng từng thiết bị                            Long
+Bước 7   vòng select() + server.c (tiêu chí 2)                       Long
+Bước 8   handlers.c (HELLO/INFO/BYE), discovery stub, smoke test     Long
+Bước 9   ui.c - nhập liệu an toàn                                    Minh
+Bước 10  controller main - App ID, menu                              Minh
+Bước 11  coop.c - quản lý chuồng (tiêu chí 13)                       Minh
+Bước 12  conn.c - kết nối TCP có timeout                             Minh
+Bước 13  tích hợp, sanitize, tổng kết                                Cả hai
+```
+Xem từng bước: `git log --oneline`, rồi `git show <mã commit>`.
+
+### Tiêu chí điểm đã có nền tảng sau tuần 1
+| Tiêu chí | Trạng thái |
+|---|---|
+| 1. Xử lý truyền dòng | ✅ Xong (`net_io.c`, có test + smoke test) |
+| 2. Vào/ra socket server | ✅ Xong phần TCP (`select`). Tuần 2 thêm UDP |
+| 4. Khởi tạo thông số | ✅ Xong |
+| 12. Log | 🟡 Đã có nền. Mỗi tuần thêm sự kiện |
+| 13. Quản lý chuồng | ✅ Xong. Tuần 2 thêm "thêm thiết bị từ kết quả quét" |
+| 3, 5, 6, 7 | ⏭ Tuần 2 |
+| 8, 9, 10, 11 | ⏭ Tuần 3 |
+
+### Khác biệt so với kế hoạch (`tuan1_code.md`)
+| Kế hoạch | Thực tế | Lý do |
+|---|---|---|
+| Test "5000 byte + `HELLO\n`" | "5000 byte + `\n` + `HELLO\n`" | Không có `\n` thì `HELLO` thuộc về dòng quá dài |
+| Mục "[DEV] Gửi lệnh thô" là số 9 | Số 5 | `ui_menu` đánh số liên tiếp |
+| Kiểm thử bằng `nc` | `tests/smoke_server.py`, `tests/fake_device.py` | Máy chưa cài `nc`. Script chạy lại được, không phải gõ tay |
+| — | Thêm `.gitattributes` (LF) | Windows `autocrlf` đổi sang CRLF làm hỏng Makefile |
+| — | Thêm mã `409 POWER_OFF` vào `protocol.h` | Đã chốt ở bước tạo khung file |
+
+### Lỗi đã gặp (nên đọc kỹ khi tự code lại)
+1. **`/*` trong chú thích** sinh warning `-Wcomment` (bước 1).
+2. **Make tự xoá file `.o` trung gian**, sửa bằng `.SECONDARY:` (bước 2).
+3. **Treo vô hạn khi sinh ID**: kiểm tra trùng trên chính biến đang ghi (bước 5).
+4. **Output không hiện khi ghi ra file**: stdio gom bộ đệm, sửa bằng `setvbuf(_IOLBF)` (bước 7).
+5. **Test gửi tín hiệu quá sớm** khi chương trình chưa khởi động xong (bước 7).
+6. **ASan: link thiếu cờ** `-fsanitize` (bước 13).
+
+### Việc chuyển sang tuần 2
+- Minh: thay thân `discovery.c` (UDP 9999) + viết `scanner.c` + thêm thiết bị từ kết quả quét vào chuồng.
+- Long: `auth.c` (CONNECT/token/CHPASS/DISCONNECT), bật `need_token` trong `handlers.c`, đổi `INFO <id>` thành `INFO <id> <token>`.
+- Minh: `conn_connect()` dùng bảng phiên, timeout cho `connect()`, `ui_device.c` (kết nối, đổi mật khẩu).
+- Bỏ mục "[DEV] Gửi lệnh thô" khỏi bản nộp cuối (hoặc giấu sau tham số `--dev`).
+
+### Cách hai người tự code lại trong `RealApp/`
+1. Làm theo **đúng thứ tự bước**. Mỗi bước đọc "Đã làm" và "Tại sao" trước, **chưa nhìn code**.
+2. Tự viết, build với `-Wall -Wextra` cho sạch warning.
+3. Chạy đúng các lệnh ở mục "Kiểm tra" của bước đó, so sánh với output trong nhật ký.
+4. Lúc đó mới mở code mẫu (`git show <commit>`) để so sánh cách làm.
+5. Có thể chép `tests/` sang `RealApp/` để kiểm tra code của mình: test chỉ phụ thuộc vào tên hàm trong các file `.h`.

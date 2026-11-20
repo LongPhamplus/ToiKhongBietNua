@@ -91,8 +91,10 @@ clean:
 reset-data:
 	find data logs -type f ! -name README.md -delete
 
+# Build lại TOÀN BỘ (cả test) với AddressSanitizer rồi chạy test luôn.
+# Object dịch với -fsanitize thì lúc link cũng phải có -fsanitize, nên truyền cả hai.
 sanitize: clean
-	$(MAKE) CFLAGS="-std=gnu11 -Wall -Wextra -g -fsanitize=address,undefined" \
+	$(MAKE) all test CFLAGS="-std=gnu11 -Wall -Wextra -g -fsanitize=address,undefined" \
 	        LDFLAGS="-fsanitize=address,undefined"
 
 -include $(COMMON_OBJ:.o=.d) $(DEVICE_OBJ:.o=.d) $(CTRL_OBJ:.o=.d) $(TEST_OBJ:.o=.d)
