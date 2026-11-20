@@ -16,6 +16,7 @@
 | 6 | Long | Ghi log từng thiết bị (tiêu chí 12, phần nền) | `device/dlog.h/.c` |
 | 7 | Long | **Vòng `select()` + quản lý client** (tiêu chí 2) | `device/main.c`, `device/server.h/.c` |
 | 8 | Long | Bảng điều phối lệnh HELLO/INFO/BYE + discovery giả + test tích hợp | `device/handlers.h/.c`, `device/discovery.h/.c`, `tests/smoke_server.py` |
+| 9 | Minh | Bộ công cụ nhập/xuất an toàn | `controller/ui.h/.c` |
 
 ---
 
@@ -423,3 +424,49 @@ Terminal server cho thấy fd của client đã ngắt được dùng lại:
 ```
 
 **Phía server của tuần 1 đến đây là xong (Long: bước 1–3, 5–8).**
+
+---
+
+## Bước 9: `controller/ui.c`, bộ công cụ nhập/xuất (Minh)
+
+**Commit:** `Bước 9: ui.c - nhập liệu an toàn, menu, thông báo`
+
+### Đã làm
+| Hàm | Mục đích |
+|---|---|
+| `ui_read_line` | `fgets` + `trim`. Dòng quá dài thì đọc bỏ phần thừa và hỏi lại. EOF thì trả `-1` |
+| `ui_read_int`, `ui_read_double` | Hỏi lại đến khi đúng kiểu, đúng khoảng. Enter rỗng thì trả `1` (huỷ) |
+| `ui_read_*_keep` | Hiện giá trị hiện tại trong `[]`, Enter thì giữ nguyên. Dùng cho màn hình sửa |
+| `ui_read_hhmm` | Nhập giờ lịch |
+| `ui_read_password` | Tắt hiển thị ký tự bằng `termios`, luôn khôi phục |
+| `ui_confirm`, `ui_menu` | Hỏi y/n. Menu đánh số, có mục `0` |
+| `ui_ok/err/info` | `[OK]` `[LOI]` `[i]`, chỉ tô màu khi stdout là terminal |
+| `ui_explain_code` | `403` thành "Phiên làm việc hết hạn… Hãy kết nối lại." |
+
+`controller/main.c` tạm thời là chương trình thử các hàm trên.
+
+### Tại sao
+- **Không dùng `scanf`**: `scanf("%d")` gặp chữ thì không đọc, để chữ đó nằm lại trong stdin, vòng hỏi lại đọc trúng nó mãi, thành **lặp vô hạn**. `scanf("%s")` không giới hạn độ dài, gây **tràn bộ đệm**.
+- **Quy ước trả về `0 / 1 / -1`**: phân biệt "nhập đúng", "bỏ qua" và "hết dữ liệu". Menu nào nhận `-1` cũng quay ra ngoài, nên Ctrl+D không làm chương trình kẹt.
+- **`clearerr(stdin)` sau EOF**: trên terminal, sau Ctrl+D vẫn nhập tiếp được ở menu ngoài. Nếu stdin là pipe đã hết thì mọi lần đọc sau đều trả `-1`, chương trình thoát dần một cách sạch sẽ.
+- **Đọc bỏ phần dòng thừa**: nếu không, 200 ký tự nhập ở câu hỏi 1 bị cắt, phần còn lại thành câu trả lời của câu hỏi 2.
+- **`fflush(stdout)` sau prompt**: prompt không có `\n`, stdio chưa đẩy ra màn hình nên người dùng không thấy câu hỏi.
+- **Mật khẩu không chứa dấu cách**: giao thức tách theo dấu cách, `CONNECT id app ab cd` sẽ bị hiểu sai.
+- **Luôn khôi phục `termios`**: nếu quên, sau khi nhập mật khẩu terminal không hiện chữ nữa, kể cả sau khi chương trình đã thoát.
+- **Màu chỉ khi `isatty`**: ghi ra file log thì không lẫn mã `\033[31m`.
+
+### Kiểm tra
+Đưa dữ liệu vào qua pipe (`printf '...' | ./bin/controller`):
+```
+Nhap so 1-10: [LOI] Hay nhap so nguyen tu 1 den 10      ← "abc"
+Nhap so 1-10: [LOI] Hay nhap so nguyen tu 1 den 10      ← "99"
+Nhap so 1-10: [LOI] Hay nhap so nguyen tu 1 den 10      ← "12x"
+Nhap so 1-10: -> r=0 n=7
+Tmax [32]: -> r=0 d=32.0                                ← Enter rỗng, giữ nguyên
+Mat khau: [LOI] Mat khau khong duoc chua dau cach       ← "ab cd"
+Mat khau: -> r=0 pass_len=4
+=== Menu thu ===  ...  Chon: Chon: [LOI] ...            ← Enter rỗng hỏi lại, "5" ngoài khoảng
+-> chon=2
+```
+Hết dữ liệu giữa chừng: mọi hàm trả `-1`, chương trình chạy tới cuối và thoát với mã 0, **không lặp vô hạn**.
+Nhập 200 ký tự: `[LOI] Noi dung qua dai (toi da 62 ky tu)`, hỏi lại, câu sau đọc đúng.

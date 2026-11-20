@@ -1,23 +1,44 @@
 /*
- * =============================================================================
- * FILE        : controller/ui.h
- * PHỤ TRÁCH   : Minh        · NGƯỜI DÙNG: mọi file controller (cả ui_climate.c của Long)
- * PHASE       : 1 (bàn giao kèm H6, hạn 02/12)
- * =============================================================================
+ * controller/ui.h: nhập/xuất an toàn cho giao diện dòng lệnh (Minh)
+ * Mọi màn hình (kể cả ui_climate.c của Long ở tuần 3) đều dùng các hàm này.
  *
- * CẦN KHAI BÁO (bộ công cụ nhập/xuất để mọi màn hình trông thống nhất)
- *   [ ] ui_read_line(prompt, buf, sz): fgets + trim. Trả -1 khi EOF (Ctrl+D).
- *   [ ] ui_read_int(prompt, min, max, &out): lặp hỏi lại đến khi hợp lệ hoặc người dùng bỏ (Enter rỗng).
- *   [ ] ui_read_double(prompt, min, max, &out)
- *   [ ] ui_read_double_keep(prompt, current, min, max, &out): hiện giá trị hiện tại,
- *       Enter rỗng nghĩa là giữ nguyên. Dùng cho mọi màn hình SET.
- *   [ ] ui_read_hhmm(prompt, &minute)
- *   [ ] ui_read_password(prompt, buf, sz): tắt echo (termios).
- *   [ ] ui_confirm(prompt): hỏi y/n.
- *   [ ] ui_menu(title, items[], n): in menu đánh số, trả lựa chọn (0 = quay lại).
- *   [ ] ui_table_*: in bảng căn cột (tiêu đề, dòng, đường kẻ).
- *   [ ] ui_ok(msg), ui_err(msg), ui_info(msg): in có tiền tố [OK] / [LỖI] / [i] (có thể tô màu ANSI).
- *   [ ] ui_explain_code(code): mã 400/401/403/... thành câu tiếng Việt dễ hiểu.
- *   [ ] ui_pause(): "Nhấn Enter để tiếp tục".
- * =============================================================================
+ * QUY ƯỚC GIÁ TRỊ TRẢ VỀ của các hàm ui_read_*:
+ *    0  đọc được giá trị hợp lệ
+ *    1  người dùng nhấn Enter rỗng (huỷ / bỏ qua)
+ *   -1  hết dữ liệu vào (Ctrl+D / EOF): người gọi nên quay lại menu trước
  */
+#ifndef UI_H
+#define UI_H
+
+#include <stddef.h>
+
+int  ui_read_line(const char *prompt, char *buf, size_t sz);
+int  ui_read_int(const char *prompt, int min, int max, int *out);
+int  ui_read_double(const char *prompt, double min, double max, double *out);
+
+/* Các bản *_keep hiện giá trị hiện tại trong ngoặc []. Enter rỗng = giữ nguyên (trả 0). */
+int  ui_read_int_keep(const char *prompt, int cur, int min, int max, int *out);
+int  ui_read_double_keep(const char *prompt, double cur, double min, double max, double *out);
+int  ui_read_str_keep(const char *prompt, const char *cur, char *buf, size_t sz);
+
+int  ui_read_hhmm(const char *prompt, int *minute);
+
+/* Nhập mật khẩu không hiện ký tự. Từ chối mật khẩu có dấu cách. */
+int  ui_read_password(const char *prompt, char *buf, size_t sz);
+
+int  ui_confirm(const char *prompt);         /* 1 = đồng ý (y), 0 = không */
+
+/* In menu đánh số 1..n và mục "0. <back_label>". Trả lựa chọn 0..n, hoặc -1 nếu EOF. */
+int  ui_menu(const char *title, const char *items[], int n, const char *back_label);
+
+void ui_ok(const char *fmt, ...)   __attribute__((format(printf, 1, 2)));
+void ui_err(const char *fmt, ...)  __attribute__((format(printf, 1, 2)));
+void ui_info(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+
+/* Mã phản hồi thành câu tiếng Việt dễ hiểu cho người dùng */
+const char *ui_explain_code(int code);
+
+void ui_hr(int width);                       /* in đường kẻ ngang */
+void ui_pause(void);                         /* "Nhan Enter de tiep tuc" */
+
+#endif /* UI_H */
