@@ -14,6 +14,7 @@
 | 4 | Minh | Tách lệnh, đọc/ghi key=value | `common/kv.h/.c`, `tests/test_kv.c` |
 | 5 | Long | **Khởi tạo thông số** (tiêu chí 4): nạp/lưu thiết bị, sinh ID | `device/device.c`, `config/coop_A.conf`, `config/coop_B.conf` |
 | 6 | Long | Ghi log từng thiết bị (tiêu chí 12, phần nền) | `device/dlog.h/.c` |
+| 7 | Long | **Vòng `select()` + quản lý client** (tiêu chí 2) | `device/main.c`, `device/server.h/.c` |
 
 ---
 
@@ -301,3 +302,75 @@ $ cat logs/FAN-2E08.log
 ```
 Dòng DEBUG không xuất hiện (đã bị lọc). Chạy lần 2 thì file dài thêm (ghi nối).
 Ghi chú: giờ trong log là **UTC** vì WSL chưa đặt múi giờ. Sửa bằng `sudo ln -sf /usr/share/zoneinfo/Asia/Ho_Chi_Minh /etc/localtime` hoặc chạy với `TZ=Asia/Ho_Chi_Minh`.
+
+---
+
+## Bước 7: vòng `select()` + `server.c`, vào/ra phía server (Long). TIÊU CHÍ 2
+
+**Commit:** `Bước 7: vòng select() + server.c (tiêu chí 2), tạm trả echo`
+
+### Đã làm
+**`device/main.c`**
+- Đọc tham số `-c config -p tcp -u udp -s speed -h` bằng `getopt`.
+- `signal(SIGPIPE, SIG_IGN)`. `sigaction` cho SIGINT/SIGTERM chỉ đặt cờ `g_stop`.
+- `setvbuf(stdout, _IOLBF)`: đẩy output theo từng dòng.
+- `open_listener`: `socket`, `SO_REUSEADDR`, `bind INADDR_ANY`, `listen`.
+- **Vòng lặp chính:** dựng lại `fd_set` (listener + stdin + mọi client), tính lại `max_fd`, timeout = thời gian còn lại đến tick kế tiếp, rồi `select`, rồi xử lý fd nào sẵn sàng, rồi đến giờ thì `sim_tick()`.
+- Lệnh quản trị trên stdin: `status`, `clients`, `quit`. Stdin bị đóng (chạy nền) thì thôi theo dõi.
+- Khi thoát: ghi log, `devices_save`, đóng client, đóng listener, đóng log.
+
+**`device/server.c`**
+- Mảng `client_t[MAX_CLIENTS]`, ô trống có `fd = -1`. Mỗi client một `linebuf_t` riêng.
+- `server_accept`: lấy IP:port bằng `inet_ntop`. Đầy thì trả `500` rồi đóng.
+- `handle_client`: `linebuf_fill` **một lần**, rồi **lặp** `linebuf_next`. Mỗi dòng một phản hồi. `recv` trả 0 thì đóng client.
+- In lệnh ra màn hình, che mật khẩu của `CONNECT` / `CHPASS`.
+- **Tạm thời** trả `200 OK echo=<dòng>`. Bước 8 thay bằng bảng điều phối lệnh.
+
+### Tại sao
+- **`select()` một luồng**: một chỗ duy nhất chờ mọi nguồn sự kiện, không cần mutex. Timeout của `select` đóng vai **bộ hẹn giờ** cho mô phỏng. So sánh khi vấn đáp:
+  | | `fork()` | `pthread` | `select()` |
+  |---|---|---|---|
+  | Dữ liệu thiết bị dùng chung | Khó (mỗi tiến trình một bản sao) | Được, nhưng cần mutex | Được, không cần khoá |
+  | Bộ hẹn giờ mô phỏng | Phải thêm tiến trình | Phải thêm luồng | Có sẵn (timeout) |
+  | Giới hạn | Tốn bộ nhớ | Race condition | `FD_SETSIZE` = 1024; một handler chậm làm chậm tất cả |
+- **Dựng lại `fd_set` mỗi vòng**: `select` **xoá** khỏi tập các fd chưa sẵn sàng.
+- **Tính lại `max_fd` mỗi vòng**: client mới có fd lớn hơn; client đóng thì fd đó không còn hợp lệ.
+- **Ô trống `fd = -1` thay vì dồn mảng**: đóng client ngay trong vòng duyệt không làm lệch chỉ số `i`. Code mẫu `select_server.c` không xoá client khỏi mảng, nên sau khi client ngắt vẫn gọi `FD_SET` trên fd đã đóng.
+- **`SO_REUSEADDR`**: sau khi tắt, cổng còn ở trạng thái TIME_WAIT khoảng 60 giây. Không có cờ này thì chạy lại sẽ báo "Address already in use".
+- **`SIGPIPE`**: client tắt đột ngột mà server vẫn `send` thì kernel gửi SIGPIPE, mặc định **giết** server.
+- **Signal handler chỉ đặt cờ**: trong handler không được gọi `printf` / `malloc` (không an toàn tín hiệu). Không đặt `SA_RESTART` để `select` trả `EINTR` ngay khi nhấn Ctrl+C.
+- **stdin đọc bằng `read()`, không dùng `fgets`**: `fgets` đọc vào bộ đệm stdio, có thể nuốt nhiều dòng một lúc. Khi đó `select` không còn báo fd 0 sẵn sàng dù vẫn còn dòng chưa xử lý.
+- **Tick không "đuổi"**: nếu máy bị treo vài giây thì chỉ chạy một tick rồi đặt lại mốc, không chạy dồn hàng loạt tick một lúc.
+
+### Kiểm tra
+Chưa có `nc` trên máy, nên dùng một script Python nhỏ mở 3 kết nối cùng lúc:
+```
+A gửi "HEL", chờ 0.5s, gửi "LO\nINFO X\n"
+  A: 200 OK echo=HELLO
+  A: 200 OK echo=INFO X                     ← 1 dòng bị cắt vụn + 2 dòng dồn: đúng
+B gửi 5000 'x' + "\nPING\n"
+  B: 400 BAD_REQUEST LINE_TOO_LONG | 200 OK echo=PING
+C đóng kết nối; B gửi tiếp "AFTER"
+  B: 200 OK echo=AFTER                      ← client khác ngắt không ảnh hưởng
+```
+Terminal server:
+```
+[+] client 127.0.0.1:56994 (fd=12)
+[+] client 127.0.0.1:57002 (fd=13)
+[+] client 127.0.0.1:57008 (fd=14)
+[12] HELLO
+[12] INFO X
+[13] PING
+[-] client 127.0.0.1:57008 (fd=14) da ngat ket noi
+[13] AFTER
+...
+> status
+tick=3  clients=0                           ← tick vẫn chạy khi không có client
+```
+Ctrl+C (SIGINT): in `Dang tat: luu du lieu...`, thoát với mã 0. Chạy lại ngay thì bind thành công.
+
+fd bắt đầu từ 12 vì fd 3–10 là 7 file log + 1 listener (fd 0–2 là stdin/out/err).
+
+### Phát sinh
+- Khi stdout ghi ra file, các dòng `[+] client` không hiện ra ngay (stdio gom 4 KB mới ghi). Đã thêm `setvbuf(stdout, NULL, _IOLBF, 0)`.
+- Lúc viết script test: gửi `kill` ngay sau khi khởi động thì đôi khi server chưa kịp đăng ký handler. **Trong script test luôn chờ server sẵn sàng rồi mới tác động.**
