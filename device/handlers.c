@@ -1,58 +1,97 @@
 /*
- * =============================================================================
- * FILE        : device/handlers.c
- * PHỤ TRÁCH   : Long
- * PHASE       : 1 → 4 (làm dần)
- * TIÊU CHÍ    : 3, 6, 7, 8 (POWER), 9 (SET/SCHED), 10 (MODE/ACT), 11 (INFO), 12 (LOG)
- * =============================================================================
+ * device/handlers.c: bảng điều phối lệnh (Long)
  *
- * MỤC ĐÍCH
- *   Bảng điều phối lệnh: tên lệnh ánh xạ tới hàm xử lý (giống IT4062/1-Chap1/lab05_function_pointer.c).
- *   Các handler ở đây chỉ làm phần CHUNG (kiểm tra tham số, quyền, ghi log),
- *   phần riêng theo loại thiết bị thì gọi qua bảng hàm theo loại.
+ * Bảng { tên lệnh, hàm xử lý, cần token? }, giống IT4062/1-Chap1/lab05_function_pointer.c.
+ * Thêm lệnh mới chỉ cần thêm một dòng vào bảng, không phải viết thêm chuỗi if/else.
  *
- * VIỆC CẦN LÀM
- *   [ ] handlers_dispatch: chép line ra bản sao, split_words (kv.c), tra bảng
- *       {tên, hàm, cần_token?}. Không thấy thì "400 BAD_REQUEST unknown_command".
- *   [ ] Lệnh cần token: gọi auth_authorize(argv[1], argv[2], &dev) (auth.c).
- *       Nếu lỗi thì trả ngay 404/403. Từ argv[3] trở đi là tham số riêng.
- *
- *   PHASE 1
- *   [ ] HELLO : "200 OK devices=<n> server=device_sim/1.0"
- *   [ ] BYE   : "200 OK" + đánh dấu client cần đóng.
- *   [ ] INFO  : (tạm chưa kiểm tra token) "200 OK id= type= name= power= mode="
- *               + phần riêng do hàm info theo loại thêm vào.
- *
- *   PHASE 2 (cùng auth.c)
- *   [ ] CONNECT <id> <app_id> <pass>: gọi auth_connect() rồi trả token.
- *   [ ] CHPASS  <id> <token> <old> <new>: gọi auth_change_password().
- *   [ ] DISCONNECT <id> <token>: auth_revoke().
- *   [ ] Bật kiểm tra token cho INFO.
- *
- *   PHASE 3
- *   [ ] POWER <id> <token> ON|OFF: (tiêu chí 8) đổi dev->power; nếu OFF thì tắt
- *       mọi trạng thái running; log "POWER ON->OFF by app=...".
- *       Sai giá trị thì 400.
- *   [ ] MODE <id> <token> AUTO|MANUAL: (tiêu chí 10) ENV_SENSOR/EGG_COUNTER
- *       trả 405. Log thay đổi.
- *   [ ] SET <id> <token> k=v ...: (tiêu chí 9) gọi hàm set theo loại; sau khi
- *       thành công thì devices_save() và log từng key "cũ -> mới".
- *       Ngoài ra luôn cho phép SET name=<tên> cho mọi loại (xử lý ngay tại đây).
- *   [ ] ACT <id> <token> <action> ...: (tiêu chí 10) nếu power OFF thì
- *       trả "409 POWER_OFF". Mã này chưa có trong KE_HOACH, cần bổ sung vào PROTOCOL.md.
- *       Còn lại gọi hàm act theo loại.
- *   [ ] SCHED <id> <token> LIST|ADD|DEL ...: gọi hàm sched theo loại (Minh viết).
- *
- *   PHASE 4
- *   [ ] LOG <id> <token> [n]: n mặc định 20, tối đa 200. Đọc n dòng cuối của
- *       logs/<id>.log (dlog_tail trong dlog.c), trả "200 OK lines=k" rồi
- *       k dòng rồi ".". Nếu một dòng log đúng bằng "." thì đổi thành ".."
- *       (ghi chú trong PROTOCOL.md).
- *
- * QUY ƯỚC PHẢN HỒI
- *   - Luôn đúng MỘT dòng (trừ LOG), không quá MAX_LINE.
- *   - Lỗi tham số số học thì "422 INVALID_PARAM <key> <lý do ngắn không dấu cách>".
- *
- * KIỂM THỬ: dùng nc gõ tay từng lệnh trong PROTOCOL.md, cả trường hợp đúng và sai.
- * =============================================================================
+ * Tuần 1: HELLO, INFO (chưa kiểm tra token), BYE.
+ * Tuần 2: CONNECT, CHPASS, DISCONNECT + bật kiểm tra token.
+ * Tuần 3: POWER, MODE, SET, ACT, SCHED.  Tuần 4: LOG.
  */
+#include "handlers.h"
+#include "device.h"
+#include "kv.h"
+#include "util.h"
+
+#include <stdarg.h>
+#include <stdio.h>
+#include <string.h>
+
+/* Ghi "<mã> <TÊN> [chi tiết]" vào resp, trả lại mã */
+static int reply(char *resp, size_t sz, int code, const char *fmt, ...)
+{
+    int n = snprintf(resp, sz, "%d %s", code, rc_name(code));
+    if (fmt && n > 0 && (size_t)n < sz) {
+        resp[n++] = ' ';
+        resp[n] = '\0';
+        va_list ap;
+        va_start(ap, fmt);
+        vsnprintf(resp + n, sz - (size_t)n, fmt, ap);
+        va_end(ap);
+    }
+    return code;
+}
+
+/* HELLO: client kiểm tra "đầu bên kia đúng là device_sim" */
+static int h_hello(client_t *c, int argc, char *argv[], char *resp, size_t sz)
+{
+    (void)c; (void)argc; (void)argv;
+    return reply(resp, sz, RC_OK, "devices=%d server=%s", device_count(), PROTO_VERSION);
+}
+
+/* INFO <device_id>   (tuần 2 đổi thành INFO <device_id> <token>) */
+static int h_info(client_t *c, int argc, char *argv[], char *resp, size_t sz)
+{
+    (void)c;
+    if (argc < 2)
+        return reply(resp, sz, RC_BAD_REQUEST, "missing_device_id");
+    device_t *d = device_find(argv[1]);
+    if (!d)
+        return reply(resp, sz, RC_NO_SUCH_DEVICE, NULL);
+
+    reply(resp, sz, RC_OK, "id=%s type=%s name=%s power=%s mode=%s",
+          d->id, dev_type_to_str(d->type), d->name,
+          d->power == PWR_ON ? "ON" : "OFF", d->mode == MODE_AUTO ? "AUTO" : "MANUAL");
+    /* Thông số riêng theo loại (dùng chung hàm với devices_save) */
+    if (device_params_to_kv(d, resp, sz) != 0)
+        return reply(resp, sz, RC_SERVER_ERROR, "response_too_long");
+    return RC_OK;
+}
+
+/* BYE: trả lời rồi server.c đóng kết nối */
+static int h_bye(client_t *c, int argc, char *argv[], char *resp, size_t sz)
+{
+    (void)argc; (void)argv;
+    c->close_after = 1;
+    return reply(resp, sz, RC_OK, NULL);
+}
+
+static const struct {
+    const char *name;
+    handler_fn  fn;
+    int         need_token;   /* tuần 1 chưa dùng; tuần 2 kiểm tra trước khi gọi fn */
+} COMMANDS[] = {
+    { CMD_HELLO, h_hello, 0 },
+    { CMD_INFO,  h_info,  0 },   /* tuần 2: đổi thành 1 */
+    { CMD_BYE,   h_bye,   0 },
+};
+
+int handlers_dispatch(client_t *c, const char *line, char *resp, size_t sz)
+{
+    /* split_words sửa trực tiếp chuỗi, nên làm trên bản sao để không phá dòng gốc */
+    char copy[MAX_LINE];
+    safe_copy(copy, sizeof copy, line);
+
+    char *argv[MAX_ARGS];
+    int argc = split_words(copy, argv, MAX_ARGS);
+    if (argc < 0)
+        return reply(resp, sz, RC_BAD_REQUEST, "too_many_args");
+    if (argc == 0)
+        return reply(resp, sz, RC_BAD_REQUEST, "empty");
+
+    for (size_t i = 0; i < sizeof COMMANDS / sizeof COMMANDS[0]; i++)
+        if (strcmp(argv[0], COMMANDS[i].name) == 0)
+            return COMMANDS[i].fn(c, argc, argv, resp, sz);
+
+    return reply(resp, sz, RC_BAD_REQUEST, "unknown_command");
+}

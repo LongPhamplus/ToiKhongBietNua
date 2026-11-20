@@ -3,9 +3,9 @@
  *
  * Việc của file này là KẾT NỐI: ai đang kết nối, bộ đệm của từng người, đọc byte,
  * cắt dòng, gửi phản hồi, dọn dẹp khi ngắt. Ý NGHĨA của từng lệnh thuộc về handlers.c.
- * Bước 7: tạm trả lời "200 OK echo=<dòng>" để kiểm tra phần kết nối.
  */
 #include "server.h"
+#include "handlers.h"
 
 #include <errno.h>
 #include <stdio.h>
@@ -129,8 +129,7 @@ static void handle_client(client_t *c)
                 continue;           /* bỏ qua dòng trống (gõ Enter trong nc) */
             c->n_cmds++;
             print_command(c, line);
-            /* Bước 7: tạm thời trả lời lại nguyên dòng. Bước 8 thay bằng handlers_dispatch(). */
-            snprintf(resp, sizeof resp, "200 OK echo=%.900s", line);
+            handlers_dispatch(c, line, resp, sizeof resp);
         }
         if (send_line(c->fd, resp) != 0) {
             close_client(c, "loi send");

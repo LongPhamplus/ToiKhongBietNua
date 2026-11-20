@@ -23,6 +23,7 @@
 #include <unistd.h>
 
 #include "device.h"
+#include "discovery.h"
 #include "dlog.h"
 #include "kv.h"
 #include "server.h"
@@ -174,6 +175,7 @@ int main(int argc, char *argv[])
 
     int listener = open_listener(cfg->tcp_port);
     server_init();
+    int udp_fd = discovery_open(cfg->udp_port);   /* tuần 1: bản giả trả -1 */
 
     printf("%s  config=%s  TCP=%d  devices=%d\n", PROTO_VERSION, cfg->conf_name,
            cfg->tcp_port, device_count());
@@ -196,6 +198,11 @@ int main(int argc, char *argv[])
             if (STDIN_FILENO > max_fd)
                 max_fd = STDIN_FILENO;
         }
+        if (udp_fd >= 0) {
+            FD_SET(udp_fd, &rs);
+            if (udp_fd > max_fd)
+                max_fd = udp_fd;
+        }
         server_fill_fdset(&rs, &max_fd);     /* tính lại max_fd mỗi vòng */
 
         /* Chỉ chờ đến lúc tick kế tiếp. timeval đặt lại mỗi vòng. */
@@ -214,6 +221,8 @@ int main(int argc, char *argv[])
         if (n > 0) {
             if (FD_ISSET(listener, &rs))
                 server_accept(listener);
+            if (udp_fd >= 0 && FD_ISSET(udp_fd, &rs))
+                discovery_handle(udp_fd);
             if (stdin_open && FD_ISSET(STDIN_FILENO, &rs)) {
                 int r = handle_stdin();
                 if (r == 1)
@@ -237,6 +246,7 @@ int main(int argc, char *argv[])
     dlog_all(DLOG_INFO, "device_sim stopped");
     devices_save();
     server_shutdown();
+    discovery_close(udp_fd);
     close(listener);
     dlog_close_all();
     return 0;

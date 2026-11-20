@@ -1,15 +1,18 @@
 /*
- * =============================================================================
- * FILE        : device/discovery.h
- * PHỤ TRÁCH   : Minh        · NGƯỜI GẮN VÀO main.c: Long
- * PHASE       : 2 (bàn giao H8 cho Long hạn 05/12)
- * TIÊU CHÍ    : 5. Quét thiết bị (2 điểm, phía thiết bị)
- * =============================================================================
+ * device/discovery.h: trả lời gói quét UDP (Minh, tuần 2). TIÊU CHÍ 5.
  *
- * CẦN KHAI BÁO (giao diện đã hứa ở H5, không đổi)
- *   [ ] discovery_open(udp_port): trả fd UDP đã bind, hoặc -1.
- *   [ ] discovery_handle(fd): main.c gọi khi select() báo fd sẵn sàng đọc.
- *       Đọc MỘT datagram rồi trả lời. Không được chặn.
- *   [ ] discovery_close(fd)
- * =============================================================================
+ * Giao diện này do Long định nghĩa sẵn ở tuần 1 (bàn giao H5) để main.c gọi đúng chỗ.
+ * Tuần 2 Minh chỉ thay phần thân trong discovery.c, KHÔNG phải sửa main.c.
  */
+#ifndef DISCOVERY_H
+#define DISCOVERY_H
+
+/* Mở socket UDP nghe gói SCAN. Trả fd, hoặc -1 nếu chưa hỗ trợ / lỗi. */
+int  discovery_open(int udp_port);
+
+/* main.c gọi khi select() báo fd sẵn sàng: đọc MỘT datagram rồi trả lời. */
+void discovery_handle(int fd);
+
+void discovery_close(int fd);
+
+#endif /* DISCOVERY_H */

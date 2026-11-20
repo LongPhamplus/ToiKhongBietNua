@@ -15,6 +15,7 @@
 | 5 | Long | **Khởi tạo thông số** (tiêu chí 4): nạp/lưu thiết bị, sinh ID | `device/device.c`, `config/coop_A.conf`, `config/coop_B.conf` |
 | 6 | Long | Ghi log từng thiết bị (tiêu chí 12, phần nền) | `device/dlog.h/.c` |
 | 7 | Long | **Vòng `select()` + quản lý client** (tiêu chí 2) | `device/main.c`, `device/server.h/.c` |
+| 8 | Long | Bảng điều phối lệnh HELLO/INFO/BYE + discovery giả + test tích hợp | `device/handlers.h/.c`, `device/discovery.h/.c`, `tests/smoke_server.py` |
 
 ---
 
@@ -369,8 +370,56 @@ tick=3  clients=0                           ← tick vẫn chạy khi không có
 ```
 Ctrl+C (SIGINT): in `Dang tat: luu du lieu...`, thoát với mã 0. Chạy lại ngay thì bind thành công.
 
-fd bắt đầu từ 12 vì fd 3–10 là 7 file log + 1 listener (fd 0–2 là stdin/out/err).
+fd của client bắt đầu từ 12 vì các số nhỏ hơn đã bị chiếm: 0–2 là stdin/stdout/stderr, tiếp theo là 7 file log và socket listener. Kernel luôn cấp fd trống nhỏ nhất, nên fd của client đã đóng sẽ được dùng lại.
 
 ### Phát sinh
 - Khi stdout ghi ra file, các dòng `[+] client` không hiện ra ngay (stdio gom 4 KB mới ghi). Đã thêm `setvbuf(stdout, NULL, _IOLBF, 0)`.
 - Lúc viết script test: gửi `kill` ngay sau khi khởi động thì đôi khi server chưa kịp đăng ký handler. **Trong script test luôn chờ server sẵn sàng rồi mới tác động.**
+
+---
+
+## Bước 8: `handlers.c` (bảng điều phối lệnh) + discovery giả (Long)
+
+**Commit:** `Bước 8: handlers.c (HELLO/INFO/BYE), discovery stub, smoke test`
+
+### Đã làm
+- `handlers.c`: bảng `{tên lệnh, con trỏ hàm, cần_token}` và hàm `handlers_dispatch`.
+  - `HELLO` → `200 OK devices=7 server=device_sim/1.0`
+  - `INFO <id>` → `200 OK id= type= name= power= mode=` + thông số riêng (dùng lại `device_params_to_kv`)
+  - `BYE` → `200 OK` rồi đóng kết nối
+  - Không thấy lệnh → `400 BAD_REQUEST unknown_command`
+- `server.c`: thay echo bằng `handlers_dispatch`.
+- `discovery.h/.c`: **bản giả** (`discovery_open` trả `-1`). `main.c` đã gọi đúng chỗ: thêm UDP fd vào `select`, gọi `discovery_handle`. 🔁 **H5** cho Minh.
+- `tests/smoke_server.py`: 10 kiểm tra tích hợp tự động (thay cho gõ tay bằng `nc`).
+
+### Tại sao
+- **Bảng con trỏ hàm** thay cho `if (strcmp(..)) else if ...`: tuần 2–4 có thêm 10 lệnh, mỗi lệnh chỉ là một dòng trong bảng. Cột `need_token` để tuần 2 kiểm tra quyền **một chỗ** trước khi gọi hàm.
+- **Tách `server.c` / `handlers.c`**: `server.c` không biết gì về thiết bị, `handlers.c` không biết gì về socket. Mỗi file test và sửa riêng được.
+- **Dispatch làm trên bản sao của dòng**: `split_words` chèn `\0` vào chuỗi. Nếu `server.c` còn cần dòng gốc (để in, để log) thì không được phá nó.
+- **Hàm `reply()`** tự ghép `"<mã> <TÊN>"` từ `rc_name()`, nên mã và tên không bao giờ lệch nhau (`403 NO_SUCH_DEVICE` sai kiểu này không thể xảy ra).
+- **`INFO` dùng lại `device_params_to_kv`**: thông số trong file `data/` và trong phản hồi `INFO` luôn cùng định dạng.
+- **Discovery giả**: Minh chỉ thay **thân hàm** ở tuần 2. `main.c` không đổi, nên không xung đột Git với Long.
+
+### Kiểm tra
+```
+$ ./bin/device_sim -c config/coop_A.conf       # terminal 1
+$ python3 tests/smoke_server.py                 # terminal 2
+[PASS] HELLO -> 200 OK devices=7
+[PASS] INFO FAN-2E08 -> 200 OK ... Tmax=
+[PASS] INFO XYZ -> 404 NO_SUCH_DEVICE
+[PASS] INFO thieu tham so -> 400
+[PASS] ABC -> 400 unknown_command
+[PASS] 'HEL' + (1s) + 'LO\nINFO ..' -> dung 2 phan hoi
+[PASS] HELLO\r\n (kieu telnet) -> 200
+[PASS] dong 5000 byte -> 400 LINE_TOO_LONG, ket noi van dung duoc
+[PASS] 5 client dong thoi, 1 client ngat giua chung, 4 client con lai van duoc phuc vu
+[PASS] BYE -> 200 OK roi server dong ket noi
+==> TAT CA PASS
+```
+Terminal server cho thấy fd của client đã ngắt được dùng lại:
+```
+[-] client 127.0.0.1:58670 (fd=15) da ngat ket noi
+[+] client 127.0.0.1:58688 (fd=15)
+```
+
+**Phía server của tuần 1 đến đây là xong (Long: bước 1–3, 5–8).**
