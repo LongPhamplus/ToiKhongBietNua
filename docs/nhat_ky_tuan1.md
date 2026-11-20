@@ -11,6 +11,7 @@
 | 1 | Long | Phần dùng chung: hằng số, mô hình thiết bị, Makefile | `common/protocol.h`, `device/device.h`, `Makefile`, `.gitignore`, `.gitattributes` |
 | 2 | Long | Tiện ích chung + framework test | `common/util.h/.c`, `tests/test.h`, `tests/test_util.c` |
 | 3 | Long | **Xử lý truyền dòng** (tiêu chí 1) | `common/net_io.h/.c`, `tests/test_netio.c` |
+| 4 | Minh | Tách lệnh, đọc/ghi key=value | `common/kv.h/.c`, `tests/test_kv.c` |
 
 ---
 
@@ -146,3 +147,59 @@ Test dùng `socketpair()` để có 2 đầu socket nối nhau ngay trong một 
 
 ### Tự code lại
 Vẽ ra giấy bộ đệm `[I N F O _ F A]` → `[I N F O _ F A N - 1 \n I N ...]`, làm tay từng bước `memchr` / `memcpy` / `memmove`, rồi mới code `linebuf_next`.
+
+---
+
+## Bước 4: `common/kv`, tách lệnh và đọc key=value (Minh)
+
+**Commit:** `Bước 4: kv.c - split_words, kv_get_*, parse_hhmm + test`
+
+### Đã làm
+| Hàm | Dùng để | Ai dùng |
+|---|---|---|
+| `split_words` | Tách `"INFO FAN-1"` thành `["INFO","FAN-1"]` | `handlers.c`, `device.c`, `coop.c` |
+| `kv_find`, `kv_get_str/double/int` | Đọc `Tmax=32` trong lệnh hoặc file | Cả hai |
+| `parse_double_strict`, `parse_int_strict` | Đổi chuỗi sang số, từ chối rác | Cả hai (kể cả ô nhập trong `ui.c`) |
+| `parse_hhmm`, `format_hhmm` | Giờ lịch cho ăn/uống | Tuần 3 |
+| `kv_append` | Ghép phản hồi `INFO` (server), ghép lệnh `SET` (client) | Cả hai |
+| `dev_type_*` | Đổi `"FAN"` ↔ `DEV_FAN` ↔ `"FAN-"` ↔ `"Quat dieu hoa"` | Cả hai |
+| `resp_code`, `rc_name` | `"403 ..."` → `403`, `403` → `"INVALID_TOKEN"` | Client đọc / server ghi |
+
+### Tại sao
+- **`strtok_r` thay vì `strtok`**: `strtok` nhớ vị trí bằng biến tĩnh ẩn. Nếu đang tách một dòng mà gọi hàm khác cũng dùng `strtok`, vị trí bị ghi đè. Bản `_r` giữ vị trí trong biến `save` của mình (xem `IT4062/1-Chap1/lab09_string.c`).
+- **`split_words` sửa trực tiếp `line`**: không cấp phát thêm bộ nhớ, `argv[i]` trỏ vào chính `line`. Người gọi phải dùng **bản sao** nếu còn cần dòng gốc.
+- **`kv_find` kiểm tra ký tự `=` ngay sau key**: tìm `"Tp1"` mà chỉ so tiền tố thì sẽ khớp nhầm `"Tp10=5"`.
+- **Mã trả về 3 mức (`0` / `-1` / `-2`)**: người gọi phân biệt được "không có key" (dùng giá trị mặc định) với "có key nhưng giá trị sai" (báo lỗi `422`).
+- **`*_strict`**: `atof("28abc")` trả 28 mà không báo lỗi, `atof("abc")` trả 0. Kiểm tra `end` của `strtod` mới biết chuỗi có đúng là số hay không. Từ chối thêm `nan`/`inf` vì thông số nhiệt độ không thể là vô cùng.
+- **`kv_append` hoàn tác khi thiếu chỗ**: phản hồi bị cắt nửa chừng (`Tmax=3`) còn tệ hơn không có. Hoàn tác thì người gọi biết là lỗi.
+- **Một bảng `DEV_TABLE` duy nhất**: thêm loại thiết bị mới chỉ cần sửa một chỗ.
+
+### Kiểm tra
+```
+== bin/test_kv
+[PASS] split_words("SET FAN-1 tok Tmax=31 Tp1=27") -> 5 tu
+[PASS] kv_get_double Tmax -> 31.0
+[PASS] kv_get_double Tp1 -> 27.0
+[PASS] key khong co -> -1
+[PASS] split_words bo qua dau cach thua -> 3 tu
+[PASS] split_words qua max tu -> -1
+[PASS] kv_find("Tp1") khong khop nham "Tp10=5"
+[PASS] kv_get_double("Tmax=abc") -> -2
+[PASS] kv_get_str qua dai -> -2
+[PASS] parse_double_strict("28.5")
+[PASS] parse_double_strict tu choi "", "abc", "28,5", "28.5x", "nan"
+[PASS] parse_int_strict tu choi so tran
+[PASS] parse_hhmm("06:00") = 360
+[PASS] parse_hhmm("23:59") = 1439
+[PASS] parse_hhmm tu choi 24:00, 6:00, 06-00, 06:60
+[PASS] format_hhmm(390) = "06:30"
+[PASS] kv_append -> "200 OK Tmax=32.0"
+[PASS] kv_append vuot kich thuoc -> -1, buf giu nguyen
+[PASS] dev_type_from_str("FAN")
+[PASS] dev_type_from_str("XYZ") -> DEV_INVALID
+[PASS] dev_type_prefix(FEEDER) = "FED-"
+[PASS] resp_code("200 OK x") = 200
+[PASS] resp_code("403 INVALID_TOKEN") = 403
+[PASS] resp_code dong sai -> -1
+```
+🔁 **Bàn giao H3**: Long dùng `kv.c` ngay ở bước 5 (`device.c`).
