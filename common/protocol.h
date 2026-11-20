@@ -1,44 +1,92 @@
 /*
- * =============================================================================
- * FILE        : common/protocol.h
- * PHỤ TRÁCH   : Long + Minh (cùng viết ở Phase 0, sửa phải báo người kia)
- * PHASE       : 0 (hạn 23/11)
- * TIÊU CHÍ    : nền tảng cho mọi tiêu chí
- * =============================================================================
+ * common/protocol.h: hằng số của giao thức (dùng chung cho device_sim và controller)
+ * Phụ trách: Long + Minh (sửa phải báo người kia)
  *
- * MỤC ĐÍCH
- *   Nơi DUY NHẤT định nghĩa các hằng số của giao thức. Cả device_sim và
- *   controller cùng include file này, nên hai bên không bao giờ "lệch" nhau
- *   về tên lệnh, cổng hay mã lỗi.
- *   Chỉ chứa #define / enum. KHÔNG có hàm, KHÔNG có biến.
- *
- * VIỆC CẦN LÀM
- *   [ ] Header guard.
- *   [ ] Cổng mặc định: UDP quét = 9999, TCP điều khiển = 7000.
- *   [ ] Giới hạn độ dài:
- *         MAX_LINE (1024), MAX_ID (độ dài device_id, vd. 16), MAX_NAME (32),
- *         MAX_PASS (32), MIN_PASS (4), TOKEN_HEX_LEN (32), APP_ID_HEX_LEN (8),
- *         MAX_CLIENTS (64), MAX_DEVICES (32), MAX_TOKENS_PER_DEV (8),
- *         MAX_SCHED (8), MAX_ARGS (số từ tối đa trong một dòng lệnh, vd. 16).
- *   [ ] Thời gian: SCAN_WAIT_MS (2000), REQ_TIMEOUT_MS (3000),
- *         TOKEN_TTL_SEC (1800), LOCK_FAILS (5), LOCK_SEC (60), TICK_MS (1000).
- *   [ ] Tên lệnh dạng chuỗi hằng: "SCAN", "DEVICE", "HELLO", "CONNECT", "INFO",
- *         "POWER", "SET", "MODE", "ACT", "SCHED", "CHPASS", "LOG",
- *         "DISCONNECT", "BYE".
- *   [ ] Mã phản hồi (enum hoặc #define): 200, 400, 401, 403, 404, 405, 422, 423, 500,
- *         kèm chuỗi tên tương ứng (OK, BAD_REQUEST, AUTH_FAILED, ...).
- *   [ ] enum kiểu thiết bị: ENV_SENSOR, EGG_COUNTER, FEEDER, WATERER, FAN,
- *         HEATER, MISTER (+ một giá trị "không hợp lệ").
- *         Ghi chú bên cạnh tiền tố ID: ENV-, EGG-, FED-, WAT-, FAN-, HEA-, MIS-.
- *   [ ] enum power (OFF/ON) và mode (AUTO/MANUAL).
- *   [ ] Chuỗi kết thúc phản hồi nhiều dòng: "." (dùng cho lệnh LOG).
- *   [ ] Phiên bản giao thức, vd. "device_sim/1.0".
- *
- *   Hàm đổi enum <-> chuỗi ("FAN" <-> DEV_FAN) KHÔNG đặt ở đây mà đặt
- *   ở common/kv.c (Minh) để cả 2 chương trình dùng chung.
- *
- * XONG KHI
- *   - Mọi giá trị khớp với PROTOCOL.md.
- *   - grep cả project không còn số cổng / mã lỗi / tên lệnh viết cứng ở chỗ khác.
- * =============================================================================
+ * TẠI SAO CÓ FILE NÀY
+ *   Mọi con số / chuỗi mà HAI chương trình phải hiểu giống nhau (cổng, độ dài tối đa,
+ *   mã lỗi, tên lệnh, kiểu thiết bị) chỉ được định nghĩa ở đây. Nếu viết cứng "7000"
+ *   ở nhiều chỗ, sửa một chỗ mà quên chỗ khác thì hai bên sẽ "lệch" nhau.
+ *   File này chỉ chứa #define và enum: không có hàm, không có biến.
  */
+#ifndef PROTOCOL_H
+#define PROTOCOL_H
+
+/* ---- Phiên bản & cổng mặc định ---------------------------------------- */
+#define PROTO_VERSION      "device_sim/1.0"
+#define DEFAULT_UDP_PORT   9999   /* cổng nghe gói quét SCAN (tuần 2)           */
+#define DEFAULT_TCP_PORT   7000   /* cổng điều khiển                            */
+
+/* ---- Giới hạn độ dài (đều tính cả '\0' trừ khi ghi khác) ----------------- */
+#define MAX_LINE        1024   /* một dòng giao thức tối đa 1023 ký tự + '\n'   */
+#define MAX_ID            16   /* "FAN-8A21"                                     */
+#define MAX_NAME          32   /* tên thiết bị / chuồng                          */
+#define MAX_PASS          32   /* độ dài tối đa mật khẩu (không tính '\0')       */
+#define MIN_PASS           4
+#define TOKEN_HEX_LEN     32   /* token = 16 byte ngẫu nhiên = 32 ký tự hex      */
+#define APP_ID_HEX_LEN     8   /* App ID = 4 byte ngẫu nhiên = 8 ký tự hex       */
+
+/* ---- Giới hạn số lượng (dùng để khai báo mảng tĩnh) ---------------------- */
+#define MAX_CLIENTS       64   /* số kết nối TCP đồng thời của một device_sim   */
+#define MAX_DEVICES       32   /* số thiết bị trong một device_sim              */
+#define MAX_TOKENS_PER_DEV 8
+#define MAX_SCHED          8   /* số mốc lịch cho ăn/uống                        */
+#define MAX_ARGS          32   /* số từ tối đa trong một dòng lệnh               */
+
+/* ---- Thời gian ---------------------------------------------------------- */
+#define TICK_MS         1000   /* nhịp mô phỏng: 1 giây thực                     */
+#define REQ_TIMEOUT_MS  3000   /* client chờ phản hồi tối đa 3 giây              */
+#define SCAN_WAIT_MS    2000   /* thời gian gom phản hồi quét                    */
+#define TOKEN_TTL_SEC   1800   /* token hết hạn sau 30 phút không dùng           */
+#define LOCK_FAILS         5   /* sai mật khẩu 5 lần liên tiếp → khoá            */
+#define LOCK_SEC          60
+
+/* ---- Tên lệnh ----------------------------------------------------------- */
+#define CMD_SCAN       "SCAN"
+#define CMD_DEVICE     "DEVICE"
+#define CMD_HELLO      "HELLO"
+#define CMD_CONNECT    "CONNECT"
+#define CMD_INFO       "INFO"
+#define CMD_POWER      "POWER"
+#define CMD_SET        "SET"
+#define CMD_MODE       "MODE"
+#define CMD_ACT        "ACT"
+#define CMD_SCHED      "SCHED"
+#define CMD_CHPASS     "CHPASS"
+#define CMD_LOG        "LOG"
+#define CMD_DISCONNECT "DISCONNECT"
+#define CMD_BYE        "BYE"
+
+/* Phản hồi nhiều dòng (lệnh LOG) kết thúc bằng một dòng chỉ có dấu chấm */
+#define MULTILINE_END  "."
+
+/* ---- Mã phản hồi (số đứng đầu mỗi dòng phản hồi TCP) -------------------- */
+#define RC_OK            200
+#define RC_BAD_REQUEST   400
+#define RC_AUTH_FAILED   401
+#define RC_INVALID_TOKEN 403
+#define RC_NO_SUCH_DEVICE 404
+#define RC_NOT_SUPPORTED 405
+#define RC_POWER_OFF     409
+#define RC_INVALID_PARAM 422
+#define RC_LOCKED        423
+#define RC_SERVER_ERROR  500
+
+/* ---- Kiểu thiết bị ------------------------------------------------------ */
+typedef enum {
+    DEV_ENV_SENSOR = 0,  /* tiền tố ID: ENV- */
+    DEV_EGG_COUNTER,     /* EGG- */
+    DEV_FEEDER,          /* FED- */
+    DEV_WATERER,         /* WAT- */
+    DEV_FAN,             /* FAN- */
+    DEV_HEATER,          /* HEA- */
+    DEV_MISTER,          /* MIS- */
+    DEV_TYPE_COUNT,
+    DEV_INVALID = -1
+} dev_type_t;
+
+typedef enum { PWR_OFF = 0, PWR_ON = 1 } power_t;
+
+/* Không đặt tên mode_t vì trùng kiểu mode_t của <sys/types.h> */
+typedef enum { MODE_AUTO = 0, MODE_MANUAL = 1 } dev_mode_t;
+
+#endif /* PROTOCOL_H */

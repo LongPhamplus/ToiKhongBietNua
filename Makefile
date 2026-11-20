@@ -1,31 +1,95 @@
 # =============================================================================
-# Makefile: build device_sim và controller
-# Người phụ trách: Long  ·  Phase 0 (khung), cập nhật mỗi khi thêm file .c
-# Tham khảo: IT4062/1-Chap1/lab00_build/Makefile, IT4062/1-Chap1/Makefile
+# Makefile: build device_sim và controller   (Phụ trách: Long)
+#
+#   make              build cả 2 chương trình vào bin/
+#   make test         build + chạy các chương trình thử trong tests/
+#   make run-device   chạy device_sim với config/coop_A.conf
+#   make run-ctrl     chạy controller
+#   make clean        xoá bin/ build/
+#   make reset-data   xoá dữ liệu sinh ra (data/, logs/) để thử "lần chạy đầu"
+#   make sanitize     build lại với AddressSanitizer (bắt lỗi bộ nhớ)
+#
+# TẠI SAO VIẾT NHƯ VẬY
+#   - Mỗi .c dịch thành một .o riêng trong build/, nên sửa 1 file chỉ dịch lại file đó.
+#   - -MMD -MP sinh file .d ghi .c nào include .h nào, nên sửa .h thì make tự dịch lại đúng file.
+#   - device/ và controller/ dùng include path riêng để header 2 bên không lẫn nhau.
 # =============================================================================
-#
-# YÊU CẦU (chưa có code, chỉ là danh sách việc cần làm):
-#
-# [ ] Biến CC (mặc định gcc) và CFLAGS = -std=gnu11 -Wall -Wextra -g -Icommon
-# [ ] Ba nhóm nguồn:
-#       COMMON_SRC = common/*.c                      (link vào cả 2 chương trình)
-#       DEVICE_SRC = device/*.c      -> bin/device_sim
-#       CTRL_SRC   = controller/*.c  -> bin/controller
-# [ ] Đích mặc định `all`: tạo thư mục bin/ rồi build cả 2 chương trình
-# [ ] Biên dịch từng .c thành .o riêng (trong build/) để chỉ dịch lại file đã sửa
-# [ ] Sinh phụ thuộc header tự động (cờ -MMD -MP) để sửa .h thì dịch lại đúng file
-# [ ] Đích `device` và `controller` để build riêng từng chương trình
-# [ ] Đích `run-device`  : chạy bin/device_sim -c config/coop_A.conf
-# [ ] Đích `run-device2` : chạy bin/device_sim -c config/coop_B.conf
-# [ ] Đích `run-ctrl`    : chạy bin/controller
-# [ ] Đích `sanitize`    : build lại với -fsanitize=address (dùng khi phát triển)
-# [ ] Đích `valgrind`    : chạy device_sim dưới valgrind --leak-check=full (Phase 4)
-# [ ] Đích `clean`       : xoá bin/ và build/ (KHÔNG xoá data/ và logs/)
-# [ ] Đích `reset-data`  : xoá nội dung data/ và logs/ (giữ README.md) để thử lại "lần chạy đầu"
-# [ ] Khai báo .PHONY cho các đích không phải file
-# [ ] Nếu sau này dùng pthread thì thêm -pthread vào LDFLAGS
-#
-# XONG KHI:
-#   - Gõ `make` trong thư mục App/ ra 2 file trong bin/, không có cảnh báo
-#   - `touch common/protocol.h && make` dịch lại cả hai chương trình
-#   - `make clean && make` vẫn chạy được
+
+CC       ?= gcc
+CFLAGS   ?= -std=gnu11 -Wall -Wextra -g
+DEPFLAGS := -MMD -MP
+LDFLAGS  ?=
+
+BUILD := build
+BIN   := bin
+
+COMMON_SRC := $(wildcard common/*.c)
+DEVICE_SRC := $(wildcard device/*.c)
+CTRL_SRC   := $(wildcard controller/*.c)
+TEST_SRC   := $(wildcard tests/test_*.c)
+
+COMMON_OBJ := $(COMMON_SRC:%.c=$(BUILD)/%.o)
+DEVICE_OBJ := $(DEVICE_SRC:%.c=$(BUILD)/%.o)
+CTRL_OBJ   := $(CTRL_SRC:%.c=$(BUILD)/%.o)
+TEST_OBJ   := $(TEST_SRC:%.c=$(BUILD)/%.o)
+TEST_BIN   := $(TEST_SRC:tests/%.c=$(BIN)/%)
+
+.PHONY: all device controller test run-device run-device2 run-ctrl clean reset-data sanitize
+
+all: $(BIN)/device_sim $(BIN)/controller
+
+device: $(BIN)/device_sim
+controller: $(BIN)/controller
+
+$(BIN)/device_sim: $(DEVICE_OBJ) $(COMMON_OBJ)
+	@mkdir -p $(BIN)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+$(BIN)/controller: $(CTRL_OBJ) $(COMMON_OBJ)
+	@mkdir -p $(BIN)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+# Mỗi chương trình thử = tests/test_xxx.c + toàn bộ common/
+$(BIN)/test_%: $(BUILD)/tests/test_%.o $(COMMON_OBJ)
+	@mkdir -p $(BIN)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+$(BUILD)/common/%.o: common/%.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) $(DEPFLAGS) -Icommon -c $< -o $@
+
+$(BUILD)/device/%.o: device/%.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) $(DEPFLAGS) -Icommon -Idevice -c $< -o $@
+
+$(BUILD)/controller/%.o: controller/%.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) $(DEPFLAGS) -Icommon -Icontroller -c $< -o $@
+
+$(BUILD)/tests/%.o: tests/%.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) $(DEPFLAGS) -Icommon -c $< -o $@
+
+test: $(TEST_BIN)
+	@for t in $(TEST_BIN); do echo "== $$t"; ./$$t || exit 1; done
+
+run-device: $(BIN)/device_sim
+	./$(BIN)/device_sim -c config/coop_A.conf
+
+run-device2: $(BIN)/device_sim
+	./$(BIN)/device_sim -c config/coop_B.conf
+
+run-ctrl: $(BIN)/controller
+	./$(BIN)/controller
+
+clean:
+	rm -rf $(BUILD) $(BIN)
+
+reset-data:
+	find data logs -type f ! -name README.md -delete
+
+sanitize: clean
+	$(MAKE) CFLAGS="-std=gnu11 -Wall -Wextra -g -fsanitize=address,undefined" \
+	        LDFLAGS="-fsanitize=address,undefined"
+
+-include $(COMMON_OBJ:.o=.d) $(DEVICE_OBJ:.o=.d) $(CTRL_OBJ:.o=.d) $(TEST_OBJ:.o=.d)

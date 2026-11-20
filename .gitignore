@@ -1,12 +1,16 @@
-# .gitignore · Người phụ trách: Minh · Phase 0
-#
-# VIỆC CẦN LÀM: thêm các mục sau (mỗi mục 1 dòng, không có dấu # ở đầu):
-#   - bin/ và build/               (file biên dịch)
-#   - *.o và *.d                   (object, file phụ thuộc do -MMD sinh ra)
-#   - data/*, nhưng giữ lại data/README.md   (dùng dòng phủ định bắt đầu bằng !)
-#   - logs/*, nhưng giữ lại logs/README.md
-#   - core và vgcore.*             (file dump khi crash / chạy valgrind)
-#   - *.pcapng                     (file Wireshark gốc; ảnh chụp màn hình để trong docs/)
-#   - .vscode/ nếu hai người cấu hình VS Code khác nhau
-#
-# Kiểm tra: chạy `git status` sau khi build và chạy thử; không được thấy bin/, data/, logs/.
+# File biên dịch
+bin/
+build/
+*.o
+*.d
+
+# Dữ liệu sinh ra khi chạy (giữ lại README.md)
+data/*
+!data/README.md
+logs/*
+!logs/README.md
+
+# Dump khi crash / valgrind, file Wireshark gốc
+core
+vgcore.*
+*.pcapng

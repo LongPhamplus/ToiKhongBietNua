@@ -7,7 +7,7 @@
  * =============================================================================
  *
  * MỤC ĐÍCH
- *   Tạo danh sách thiết bị khi khởi động. Lần đầu lấy từ config/*.conf + giá trị
+ *   Tạo danh sách thiết bị khi khởi động. Lần đầu lấy từ config/<tên>.conf + giá trị
  *   mặc định; các lần sau lấy từ data/devices_*.conf để ID, mật khẩu, thông số
  *   được giữ nguyên.
  *
